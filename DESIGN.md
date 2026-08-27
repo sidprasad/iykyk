@@ -209,6 +209,21 @@ A small forward engine makes those choices explicit. It can ask `simp`,
 enters `RootedKnowledge` only when the engine obtains a proof term. This keeps
 the contract stable even if the proving strategy changes.
 
+The prototype exposes this as a few ordinary tactic clauses rather than a new
+automation language:
+
+```lean
+iykyk source using [step]
+iykyk source with [simp]
+iykyk source deriving [Reachable source] with [aesop]
+```
+
+Here `simp` can normalize established facts, while `simp` and Aesop can try to
+prove caller-named candidates. Aesop may also search for a contradiction. These
+are explicitly selected, bounded hooks. They can improve which true facts the
+extractor finds, but they do not change the representation, relevance policy,
+or certification boundary.
+
 The certificate is therefore an enforcement mechanism, not the main research
 claim. It prevents a bug or heuristic from silently turning a plausible fact
 into reported knowledge. The more important contribution is the extracted
