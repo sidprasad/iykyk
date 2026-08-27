@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same PR supersedes the old one; main always runs to completion.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + axiom audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: leanprover/lean-action@v1
+        with:
+          # Builds the `defaultTargets` from lakefile.toml: Iykyk and IykykExamples.
+          # The examples are the de-facto test suite -- every `iykyk` invocation in
+          # them has to elaborate, so a regression in the tactic fails the build.
+          build: true
+
+          # `lake test` is wired to the IykykExamples library (see lakefile.toml), so
+          # the example suite is reported as its own step rather than buried in the
+          # build log. Verified to exit non-zero when an `iykyk` invocation regresses.
+          test: true
+
+          # The load-bearing gate for this project. iykyk's claim is that every fact
+          # it reports carries a Lean proof, so a `sorry` reaching main would falsify
+          # the whole premise. axiom-audit inspects the compiled kernel environment
+          # rather than the source, which catches what grep cannot: `sorry`/`admit`
+          # (sorryAx), `native_decide`, and any hand-declared `axiom`.
+          #
+          # Everything in the package -- including Iykyk.Examples.* -- lives under
+          # the `Iykyk` namespace, so one root covers both libraries.
+          axiom-audit: true
+          axiom-audit-root: Iykyk
+          # Spelled out rather than left to the action's default so that the contract
+          # is visible here and an upstream default change cannot silently loosen it.
+          # Classical.choice is required: extraction builds witnesses via Classical.choose.
+          axiom-audit-allow: "propext,Classical.choice,Quot.sound"

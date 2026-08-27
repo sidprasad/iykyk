@@ -1,5 +1,7 @@
 # iykyk
 
+[![CI](https://github.com/sidprasad/iykyk/actions/workflows/ci.yml/badge.svg)](https://github.com/sidprasad/iykyk/actions/workflows/ci.yml)
+
 `iykyk` extracts finite, proof-backed knowledge about a selected Lean term from the current proof
 context. It is an early prototype of the design in [DESIGN.md](./DESIGN.md).
 

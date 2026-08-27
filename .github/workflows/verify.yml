@@ -1,0 +1,39 @@
+name: Kernel verification
+
+# leanchecker re-checks the *entire* compiled environment -- including batteries and
+# aesop -- from scratch through an independent kernel pass. That is far stronger than
+# `lake build`, which trusts the elaborator's own output, but it also redoes work on
+# dependencies that did not change. Running it here instead of on every pull request
+# keeps PR feedback fast while still verifying everything that lands on main.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays at 06:00 UTC. Catches rot from an upstream aesop/batteries change even
+    # during a stretch with no commits.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  leanchecker:
+    name: independent kernel re-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: leanprover/lean-action@v1
+        env:
+          # leanchecker checks modules in parallel and can outrun a hosted runner's
+          # memory. This project's dependency set is small, but capping parallelism
+          # costs little and removes the failure mode entirely.
+          LEAN_NUM_THREADS: "2"
+        with:
+          build: true
+          leanchecker: true
