@@ -23,9 +23,9 @@ jobs:
 
       - uses: leanprover/lean-action@v1
         with:
-          # Builds the `defaultTargets` from lakefile.toml: Iykyk and IykykExamples.
+          # Builds all `defaultTargets`: runtime, examples, and the metatheory.
           # The examples are the de-facto test suite -- every `iykyk` invocation in
-          # them has to elaborate, so a regression in the tactic fails the build.
+          # them has to elaborate, while every metatheory theorem must kernel-check.
           build: true
 
           # `lake test` is wired to the IykykExamples library (see lakefile.toml), so

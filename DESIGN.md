@@ -88,7 +88,8 @@ omitted fact is unknown; it is never interpreted as false.
 This contract is enforced at two levels. The formal model in
 `metatheory/IykykMetatheory.lean` models contexts and facts as predicates on
 possible worlds; it proves the extraction calculus sound, proves conjunction
-and shared-witness decomposition lossless, and refutes the two tempting
+and shared-witness decomposition lossless, verifies a pure recursive
+decomposition algorithm for nested formulas, and refutes the two tempting
 simpler designs (unshared witnesses, branch choice) with concrete
 counterexamples. Operationally, every extraction reifies `⟦K⟧ₜ` as one
 existentially quantified conjunction and checks its combined proof with

@@ -9,7 +9,8 @@ public section
 
 A `RootedKnowledge` stores one proof per fact, each checked at insertion time by the elaborator.
 This module builds the single proposition the whole knowledge value expresses — the design
-document's `⟦K⟧ₜ` — and checks its one combined proof with Lean's kernel, in the captured scope:
+document's `⟦K⟧ₜ` — and checks its combined proof with Lean's kernel in the captured
+scope:
 
 * the facts are conjoined in order, and
 * each existential witness is abstracted back into an existential quantifier, innermost witness
@@ -18,9 +19,9 @@ document's `⟦K⟧ₜ` — and checks its one combined proof with Lean's kernel
 
 For the running graph example the certificate proposition is literally
 `∃ w, edge source w ∧ edge w target`, and `Lean.Kernel.check` — the kernel itself, not the
-elaborator's definitional-equality test — accepts its proof on every extraction. This turns the
-central contract `Γ ⊨ ⟦K⟧ₜ` from a statement about the implementation into a check the kernel
-performs per run.
+elaborator's definitional-equality test — accepts its proof on every extraction. This turns
+the central contract `Γ ⊨ ⟦K⟧ₜ` from a statement about the implementation into a check the
+kernel performs per run.
 
 The kernel does not support metavariables or free universe parameters, so certification requires a
 fully elaborated scope; extraction inside a universe-polymorphic section over `Sort u` would need
@@ -62,14 +63,15 @@ def RootedKnowledge.certificate (knowledge : RootedKnowledge) : MetaM KnownFact 
       continue
     let predicate := Expr.lam (Name.mkSimple s!"w{witness.id}") type body .default
     let proposition ← mkAppM ``Exists #[predicate]
-    let proof ← mkAppOptM ``Exists.intro #[some type, some predicate, some term, some result.proof]
+    let proof ← mkAppOptM ``Exists.intro
+      #[some type, some predicate, some term, some result.proof]
     result := { proposition, proof }
   return result
 
 /--
-Ask the kernel — not the elaborator — whether `evidence` proves `claim` in `scope`. The claim and
-evidence are combined as `@id claim evidence`, so one kernel call checks both that the claim is a
-well-formed proposition and that the evidence has exactly that type.
+Ask the kernel — not the elaborator — whether `evidence` proves `claim` in `scope`. The
+claim and evidence are combined as `@id claim evidence`, so one kernel call checks both that
+the claim is a well-formed proposition and that the evidence has exactly that type.
 -/
 def kernelCheckClaim (scope : LocalContext) (claim evidence : Expr) : MetaM Unit := do
   let checked ← instantiateMVars (mkApp2 (mkConst ``id [.zero]) claim evidence)

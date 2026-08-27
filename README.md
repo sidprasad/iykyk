@@ -81,8 +81,10 @@ possible worlds and proves three kinds of results, each falsifiable:
   `extract_sound` extends this to knowledge values whose remaining facts carry certificates.
 - **Losslessness.** `entails_and_iff` and `exists_shared_witness_iff` prove that conjunction
   splitting and shared-witness existential decomposition preserve exactly the information of the
-  hypothesis they decompose. Soundness alone would be satisfied by reporting nothing; these are the
-  properties the trivial extractor fails.
+  hypothesis they decompose. `Formula.decompose_sound` and `Formula.decompose_lossless` verify the
+  pure recursive decomposition algorithm for nested atoms, conjunctions, and existentials.
+  Soundness alone would be satisfied by reporting nothing; these are the properties the trivial
+  extractor fails.
 - **Counterexamples.** `unshared_witnesses_lossy` proves that splitting an existential into facts
   about unrelated witnesses loses information, and `branch_choice_unsound` proves that reporting
   one branch of a disjunction is unsound. The two central design decisions are forced, not

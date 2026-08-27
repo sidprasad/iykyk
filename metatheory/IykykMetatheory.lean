@@ -15,17 +15,12 @@ The development is arranged so that each theorem says something an implementatio
 
 * `Derivation` is a syntactic calculus over a list of hypothesis facts. Its only base rule is
   membership in the hypotheses; there is no constructor that accepts a bare semantic entailment.
-  `Derivation.sound` therefore has content: it proves that the specific inference rules the
-  extractor uses (hypothesis lookup, conjunction elimination, universal instantiation, forward
-  application) cannot report a fact the hypotheses do not entail. Adding an unsound rule, such as
-  projecting one branch of a disjunction, would make this theorem false.
-* `entails_and_iff` and `exists_shared_witness_iff` state losslessness: decomposing a conjunction,
-  or an existential through one shared witness, preserves exactly the information of the original
-  hypothesis.
-* `unshared_witnesses_lossy` and `branch_choice_unsound` are counterexamples that rule out the two
-  tempting simpler designs. Splitting an existential into facts about unrelated witnesses loses
-  information, and reporting one branch of a disjunction is unsound. Both are proved false of
-  concrete contexts, so the design choices they justify are forced, not aesthetic.
+  `Derivation.sound` therefore checks the exact inference rules used by the extractor.
+* `entails_and_iff` and `exists_shared_witness_iff` say that one-step decomposition is lossless.
+  `Formula.decompose_sound` and `Formula.decompose_lossless` extend that result to nested atoms,
+  conjunctions, and existentials through a pure decomposition function.
+* `unshared_witnesses_lossy` and `branch_choice_unsound` refute two tempting simpler designs:
+  unrelated existential witnesses and unconditional choice of a disjunctive branch.
 * `CertifiedKnowledge` is the API contract mirrored by the runtime smart constructors: facts enter
   only with an entailment certificate, and projection and truncation cannot invalidate soundness.
 
@@ -140,7 +135,8 @@ information of the hypothesis they came from.
 
 /-- Conjunction decomposition is lossless: the two components together are the conjunction. -/
 theorem entails_and_iff {Γ : Context World} {left right : Fact World} :
-    Entails Γ (fun world => left world ∧ right world) ↔ (Entails Γ left ∧ Entails Γ right) := by
+    Entails Γ (fun world => left world ∧ right world) ↔
+      (Entails Γ left ∧ Entails Γ right) := by
   constructor
   · intro proof
     exact ⟨fun world compatible => (proof world compatible).1,
@@ -188,6 +184,106 @@ theorem exists_shared_witness_iff {Γ : Context World} {left right : World → �
     exact shared_witness_entails leftSat rightSat
 
 /-!
+## The verified decomposition core
+
+The two iff-lemmas above cover one conjunction or one existential. `Formula` covers the whole
+structural fragment the engine decomposes: atoms, conjunction, and existentials in any nesting.
+An existential does not bind a variable; it extends the world, so `Formula` needs no variables,
+substitution, or environments. `Formula.decompose` is the decomposition algorithm itself, written
+as a pure function: conjunctions split, and an existential contributes one chosen witness shared
+by every fact beneath it, exactly as the runtime engine uses one `Classical.choose` term.
+
+`decompose_sound` says every reported fact is entailed. `decompose_lossless` says the reported
+facts jointly reconstruct the hypothesis at any world whatsoever, which is only possible because
+the witness is shared; `unshared_witnesses_lossy` below shows it fails otherwise.
+-/
+
+/-- The structural fragment: atoms, conjunction, and world-extending existentials. -/
+inductive Formula : Type u → Type (u + 1) where
+  | atom {World : Type u} (fact : Fact World) : Formula World
+  | conj {World : Type u} (left right : Formula World) : Formula World
+  | ex {α World : Type u} (body : Formula (α × World)) : Formula World
+
+/-- A formula denotes one fact; an existential quantifies the world extension. -/
+def Formula.interp : {World : Type u} → Formula World → Fact World
+  | _, .atom fact => fact
+  | _, .conj left right => fun world => left.interp world ∧ right.interp world
+  | _, .ex body => fun world => ∃ value, body.interp (value, world)
+
+/--
+Decomposition: split conjunctions, and open each existential with one chosen witness that all
+facts beneath it share. Beneath an existential the context is extended with the witness component.
+-/
+noncomputable def Formula.decompose : {World : Type u} → (Γ : Context World) →
+    (f : Formula World) → Entails Γ f.interp → List (Fact World)
+  | _, _, .atom fact, _ => [fact]
+  | _, Γ, .conj left right, h =>
+      decompose Γ left (fun world hw => (h world hw).1) ++
+        decompose Γ right (fun world hw => (h world hw).2)
+  | _, Γ, .ex body, h =>
+      let witness := fun world hw => Classical.choose (h world hw)
+      (decompose (fun p => Γ p.2 ∧ body.interp p) body (fun _ hp => hp.2)).map
+        fun fact world => ∃ hw : Γ world, fact (witness world hw, world)
+
+/-- Every fact reported by decomposition is entailed by the context. -/
+theorem Formula.decompose_sound : {World : Type u} → {Γ : Context World} →
+    (f : Formula World) → (h : Entails Γ f.interp) →
+    ∀ fact ∈ f.decompose Γ h, Entails Γ fact
+  | _, _, .atom _, h, _, mem => by
+      simp only [decompose, List.mem_singleton] at mem
+      exact mem ▸ h
+  | _, _, .conj left right, h, _, mem => by
+      rcases List.mem_append.mp mem with mem | mem
+      · exact left.decompose_sound _ _ mem
+      · exact right.decompose_sound _ _ mem
+  | _, _, .ex body, h, _, mem => by
+      simp only [decompose, List.mem_map] at mem
+      obtain ⟨fact, memFact, rfl⟩ := mem
+      intro world hw
+      exact ⟨hw, body.decompose_sound _ fact memFact
+        (Classical.choose (h world hw), world) ⟨hw, Classical.choose_spec (h world hw)⟩⟩
+
+/-- Decomposition is nonempty: every formula contributes at least one fact. -/
+theorem Formula.decompose_ne_nil : {World : Type u} → {Γ : Context World} →
+    (f : Formula World) → (h : Entails Γ f.interp) → f.decompose Γ h ≠ []
+  | _, _, .atom _, _ => by simp [decompose]
+  | _, _, .conj left right, h => by
+      intro empty
+      simp only [decompose] at empty
+      exact left.decompose_ne_nil _ (List.append_eq_nil_iff.mp empty).1
+  | _, _, .ex body, h => by
+      intro empty
+      simp only [decompose, List.map_eq_nil_iff] at empty
+      exact body.decompose_ne_nil _ empty
+
+/--
+The reported facts jointly reconstruct the decomposed hypothesis at any world, with no reference
+to the context. Sharing is what makes this provable: each existential is re-witnessed by the one
+value all of its facts constrain.
+-/
+theorem Formula.decompose_lossless : {World : Type u} → {Γ : Context World} →
+    (f : Formula World) → (h : Entails Γ f.interp) → ∀ world,
+    (∀ fact ∈ f.decompose Γ h, fact world) → f.interp world
+  | _, _, .atom fact, _, world, holds => holds fact (by simp [decompose])
+  | _, _, .conj left right, h, world, holds =>
+      ⟨left.decompose_lossless _ world fun fact mem =>
+          holds fact (List.mem_append.mpr (.inl mem)),
+        right.decompose_lossless _ world fun fact mem =>
+          holds fact (List.mem_append.mpr (.inr mem))⟩
+  | _, Γ, .ex body, h, world, holds => by
+      simp only [decompose, List.mem_map] at holds
+      have entails : Entails (fun p => Γ p.2 ∧ body.interp p) body.interp := fun _ hp => hp.2
+      obtain ⟨first, memFirst⟩ :=
+        List.exists_mem_of_ne_nil _ (body.decompose_ne_nil entails)
+      obtain ⟨hw, -⟩ := holds _ ⟨first, memFirst, rfl⟩
+      show ∃ value, body.interp (value, world)
+      refine ⟨Classical.choose (h world hw),
+        body.decompose_lossless entails (Classical.choose (h world hw), world)
+          fun fact mem => ?_⟩
+      obtain ⟨hw', factHolds⟩ := holds _ ⟨fact, mem, rfl⟩
+      exact factHolds
+
+/-!
 ## Counterexamples for the rejected designs
 
 Two simpler designs look plausible and are refuted by concrete contexts. These theorems are the
@@ -206,7 +302,8 @@ theorem unshared_witnesses_lossy :
       (∃ witness : ∀ world, Γ world → Bool, WitnessSatisfies Γ witness right) ∧
       ¬ Entails Γ (fun world => ∃ value, left world value ∧ right world value) := by
   refine ⟨Unit, fun _ => True, fun _ value => value = true, fun _ value => value = false,
-    ⟨(), trivial⟩, ⟨fun _ _ => true, fun _ _ => rfl⟩, ⟨fun _ _ => false, fun _ _ => rfl⟩, ?_⟩
+    ⟨(), trivial⟩, ⟨fun _ _ => true, fun _ _ => rfl⟩,
+    ⟨fun _ _ => false, fun _ _ => rfl⟩, ?_⟩
   intro entails
   obtain ⟨value, isTrue, isFalse⟩ := entails () trivial
   exact Bool.noConfusion (isTrue ▸ isFalse)
