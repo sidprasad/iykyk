@@ -1,6 +1,6 @@
 name = "iykyk"
 version = "0.1.0"
-defaultTargets = ["Iykyk", "IykykExamples"]
+defaultTargets = ["Iykyk", "IykykExamples", "IykykMetatheory"]
 testDriver = "IykykExamples"
 
 [[require]]
@@ -13,3 +13,7 @@ name = "Iykyk"
 
 [[lean_lib]]
 name = "IykykExamples"
+
+[[lean_lib]]
+name = "IykykMetatheory"
+srcDir = "metatheory"

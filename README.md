@@ -62,6 +62,19 @@ object contains, preserves witnesses, applies the configured bounds, and project
 root. A result from either engine crosses the boundary only as a Lean proof term, which is checked
 against the proposition before the fact is admitted.
 
+## Formal metatheory
+
+The lightweight formal model lives separately in [`metatheory/`](./metatheory). It defines contexts
+as sets of possible worlds and proves `extract_sound`: if every emitted fact has a derivation from a
+checked certificate, conjunction elimination, or forward application, then every emitted fact holds
+in every world compatible with the context.
+
+It also proves that projection, bounded/truncated prefixes, and context strengthening preserve
+soundness; that existential decomposition uses one shared witness; that branch-common consequences
+are valid; and that inconsistency is exactly the absence of a compatible world. The only deliberately
+trusted bridge is interpreting a checked Lean `Expr` proof as a semantic certificate; the project
+does not attempt to formalize Lean's kernel.
+
 ## What works
 
 - conjunction splitting and shared existential witnesses;
@@ -89,6 +102,7 @@ Academic influences are flagged in the module comment of the file where each ide
 | Database chase | `Iykyk/Extract.lean` | Make forward rounds and their bounds explicit. |
 | Abstract interpretation / shape analysis | `Iykyk/Extract.lean` | Return a sound finite view and report truncation separately. |
 | Proof-producing automation / proof-carrying code | `Iykyk/Automation.lean` | Keep automation behind a checked certificate boundary. |
+| Possible-world semantics / refinement invariants | `metatheory/IykykMetatheory.lean` | State and prove the extraction soundness contract. |
 | Typed holes / live programming | `Iykyk/Tactic.lean` | Expose useful semantics while a proof is in progress. |
 
 Full citations and the broader research framing remain in [DESIGN.md](./DESIGN.md).

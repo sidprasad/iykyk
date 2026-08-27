@@ -85,6 +85,13 @@ fact because it is irrelevant to the root, because the configured search was
 bounded, or because the implementation does not know how to derive it. An
 omitted fact is unknown; it is never interpreted as false.
 
+The executable version of this contract is isolated in
+`metatheory/IykykMetatheory.lean`. It models contexts and facts as predicates on
+possible worlds and proves soundness for the extraction fragment, projection,
+truncation, context strengthening, shared existential witnesses, disjunction,
+and inconsistency. It deliberately treats the validation of Lean `Expr` proof
+terms as a trusted bridge instead of attempting to formalize Lean's kernel.
+
 ## Why not construct a partial Lean value?
 
 For some inductive values, a context may determine enough constructor fields to
