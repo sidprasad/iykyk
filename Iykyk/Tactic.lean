@@ -72,10 +72,10 @@ private meta def engineName : ProofEngine → String
 private meta def renderKnowledge (result : ExtractionResult) (engines : Array ProofEngine) :
     MetaM String := do
   match result with
-  | .inconsistent root _ _ =>
+  | .inconsistent inconsistency =>
       let automation := if engines.isEmpty then "" else
         s!"\n  under the hood: {String.intercalate ", " (engines.map engineName).toList}"
-      return s!"iykyk\n  root: {← ppExpr root}{automation}\n  status: inconsistent"
+      return s!"iykyk\n  root: {← ppExpr inconsistency.root}{automation}\n  status: inconsistent"
   | .knowledge knowledge =>
       let mut lines := #["iykyk", s!"  root: {← ppExpr knowledge.root}"]
       if !engines.isEmpty then
@@ -95,6 +95,7 @@ private meta def renderKnowledge (result : ExtractionResult) (engines : Array Pr
         lines := lines.push "  facts:"
         for index in [:knowledge.facts.size] do
           lines := lines.push s!"    [{index}] {← ppExpr knowledge.facts[index]!.proposition}"
+      lines := lines.push s!"  certificate: {← ppExpr (← knowledge.certificate).proposition}"
       lines := lines.push s!"  status: {if knowledge.truncated then "truncated" else "complete"}"
       return String.intercalate "\n" lines.toList
 

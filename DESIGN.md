@@ -85,12 +85,18 @@ fact because it is irrelevant to the root, because the configured search was
 bounded, or because the implementation does not know how to derive it. An
 omitted fact is unknown; it is never interpreted as false.
 
-The executable version of this contract is isolated in
-`metatheory/IykykMetatheory.lean`. It models contexts and facts as predicates on
-possible worlds and proves soundness for the extraction fragment, projection,
-truncation, context strengthening, shared existential witnesses, disjunction,
-and inconsistency. It deliberately treats the validation of Lean `Expr` proof
-terms as a trusted bridge instead of attempting to formalize Lean's kernel.
+This contract is enforced at two levels. The formal model in
+`metatheory/IykykMetatheory.lean` models contexts and facts as predicates on
+possible worlds; it proves the extraction calculus sound, proves conjunction
+and shared-witness decomposition lossless, and refutes the two tempting
+simpler designs (unshared witnesses, branch choice) with concrete
+counterexamples. Operationally, every extraction reifies `⟦K⟧ₜ` as one
+existentially quantified conjunction and checks its combined proof with
+`Lean.Kernel.check` in the captured context, so the contract above is
+re-established by the kernel on each run rather than assumed of the
+implementation. What stays deliberately trusted is only the reading of a
+kernel-checked `Expr` as a semantic statement; formalizing Lean's kernel in
+Lean is out of scope.
 
 ## Why not construct a partial Lean value?
 
@@ -152,7 +158,12 @@ implementation must represent that scope faithfully, rather than pretending
 that every fact is independently closed. One option is to produce a single
 certificate for an existentially quantified conjunction and expose projections
 through a typed interface. Another is to retain a scoped proof context in the
-knowledge object. The choice should be settled by a small prototype.
+knowledge object. The prototype settled this by doing both: the knowledge
+object captures its `LocalContext`, individual facts use stable
+`Classical.choose` terms so witnesses stay shared without new free variables,
+and the finished result is additionally reified into the single
+existentially quantified conjunction — witnesses becoming binders — whose one
+proof the kernel checks per extraction.
 
 `RootedKnowledge` is intentionally not a Spytial `DataInstance`. It does not
 choose atoms, relation names, labels, JSON fields, or drawing rules. Those are

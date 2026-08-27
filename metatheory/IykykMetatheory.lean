@@ -5,20 +5,33 @@ public import Lean
 public section
 
 /-!
-# Lightweight metatheory for iykyk
+# Metatheory for iykyk
 
 This module gives the semantic core independently of Lean's `Expr` representation. A context is a
 set of possible worlds, a fact is a predicate on worlds, and knowledge is sound when every reported
 fact holds in every world allowed by the context.
 
-The main theorem, `extract_sound`, says that an extractor is sound whenever every output fact has a
-derivation built from checked certificates, conjunction elimination, and forward application.
-Projection and truncation cannot invalidate soundness. Existential decomposition preserves one
-shared witness, and inconsistency is kept separate because it entails every fact.
+The development is arranged so that each theorem says something an implementation could get wrong:
 
-Academic lineage: possible-world semantics, proof-carrying code, and refinement-type invariants
-motivate this small semantic layer. The metaprogram-to-semantics bridge is documented separately in
-`metatheory/README.md`.
+* `Derivation` is a syntactic calculus over a list of hypothesis facts. Its only base rule is
+  membership in the hypotheses; there is no constructor that accepts a bare semantic entailment.
+  `Derivation.sound` therefore has content: it proves that the specific inference rules the
+  extractor uses (hypothesis lookup, conjunction elimination, universal instantiation, forward
+  application) cannot report a fact the hypotheses do not entail. Adding an unsound rule, such as
+  projecting one branch of a disjunction, would make this theorem false.
+* `entails_and_iff` and `exists_shared_witness_iff` state losslessness: decomposing a conjunction,
+  or an existential through one shared witness, preserves exactly the information of the original
+  hypothesis.
+* `unshared_witnesses_lossy` and `branch_choice_unsound` are counterexamples that rule out the two
+  tempting simpler designs. Splitting an existential into facts about unrelated witnesses loses
+  information, and reporting one branch of a disjunction is unsound. Both are proved false of
+  concrete contexts, so the design choices they justify are forced, not aesthetic.
+* `CertifiedKnowledge` is the API contract mirrored by the runtime smart constructors: facts enter
+  only with an entailment certificate, and projection and truncation cannot invalidate soundness.
+
+The operational extractor works with `Lean.Expr`, `LocalContext`, and `MetaM`. The bridge between
+the two layers is documented in `metatheory/README.md`; its runtime half is the kernel-checked
+certificate produced for every extraction result.
 -/
 
 namespace Iykyk.Metatheory
@@ -35,6 +48,10 @@ abbrev Fact (World : Type u) := World → Prop
 def Entails (Γ : Context World) (fact : Fact World) : Prop :=
   ∀ world, Γ world → fact world
 
+/-- The context described by a list of hypothesis facts: every listed fact holds. -/
+def Context.ofFacts (hyps : List (Fact World)) : Context World :=
+  fun world => ∀ fact ∈ hyps, fact world
+
 /-- Semantic knowledge about a distinguished root. -/
 structure Knowledge (World : Type u) (Root : Type v) where
   root : World → Root
@@ -45,35 +62,194 @@ structure Knowledge (World : Type u) (Root : Type v) where
 def Knowledge.Sound (Γ : Context World) (knowledge : Knowledge World Root) : Prop :=
   ∀ {fact}, fact ∈ knowledge.facts → Entails Γ fact
 
-/-- The proof-producing inference fragment used by the extractor. -/
-inductive Derivation {World : Type u} (Γ : Context World) : Fact World → Prop where
-  | certificate {fact} (proof : Entails Γ fact) : Derivation Γ fact
-  | andLeft {left right : Fact World}
-      (proof : Derivation Γ (fun world => left world ∧ right world)) :
-      Derivation Γ left
-  | andRight {left right : Fact World}
-      (proof : Derivation Γ (fun world => left world ∧ right world)) :
-      Derivation Γ right
-  | forward {premise conclusion : Fact World}
-      (premiseProof : Derivation Γ premise)
-      (ruleProof : Derivation Γ (fun world => premise world → conclusion world)) :
-      Derivation Γ conclusion
+/-!
+## The derivation calculus
 
-/-- Every derivation in the extraction fragment is semantically sound. -/
-theorem Derivation.sound {Γ : Context World} {fact : Fact World} :
-    Derivation Γ fact → Entails Γ fact
-  | .certificate proof => proof
+`Derivation hyps fact` says that `fact` follows from the hypothesis list by the extractor's
+inference rules alone. The base rule is membership; everything else is one of the proof-producing
+steps the runtime engine performs. There is deliberately no rule for choosing a disjunctive branch
+and no rule that accepts an unchecked semantic certificate.
+-/
+
+/-- The proof-producing inference fragment used by the extractor, relative to named hypotheses. -/
+inductive Derivation {World : Type u} (hyps : List (Fact World)) : Fact World → Prop where
+  /-- A hypothesis of the context may be reported as a fact. -/
+  | hyp {fact : Fact World} (mem : fact ∈ hyps) : Derivation hyps fact
+  /-- Conjunction elimination, left component. -/
+  | andLeft {left right : Fact World}
+      (proof : Derivation hyps (fun world => left world ∧ right world)) :
+      Derivation hyps left
+  /-- Conjunction elimination, right component. -/
+  | andRight {left right : Fact World}
+      (proof : Derivation hyps (fun world => left world ∧ right world)) :
+      Derivation hyps right
+  /-- Instantiation of a universally quantified rule at a chosen value. -/
+  | instantiate {α : Sort v} {predicate : World → α → Prop} (value : α)
+      (proof : Derivation hyps (fun world => ∀ x, predicate world x)) :
+      Derivation hyps (fun world => predicate world value)
+  /-- Forward application of a derived implication to a derived premise. -/
+  | forward {premise conclusion : Fact World}
+      (premiseProof : Derivation hyps premise)
+      (ruleProof : Derivation hyps (fun world => premise world → conclusion world)) :
+      Derivation hyps conclusion
+
+/--
+Every derivable fact is entailed by the hypotheses. This is the load-bearing soundness theorem:
+because `Derivation` has no semantic escape hatch, each constructor must be checked here, and a
+constructor that reported un-entailed facts would make the theorem unprovable.
+-/
+theorem Derivation.sound {hyps : List (Fact World)} {fact : Fact World} :
+    Derivation hyps fact → Entails (Context.ofFacts hyps) fact
+  | .hyp mem => fun _ compatible => compatible _ mem
   | .andLeft proof => fun world compatible => (proof.sound world compatible).1
   | .andRight proof => fun world compatible => (proof.sound world compatible).2
+  | .instantiate value proof => fun world compatible => proof.sound world compatible value
   | .forward premiseProof ruleProof => fun world compatible =>
       ruleProof.sound world compatible (premiseProof.sound world compatible)
 
-/-- Abstract extractor soundness: generated derivations certify every output fact. -/
-theorem extract_sound {Γ : Context World} {knowledge : Knowledge World Root}
-    (generated : ∀ {fact}, fact ∈ knowledge.facts → Derivation Γ fact) :
+/-- Derivations transfer to any context that entails each hypothesis. -/
+theorem Derivation.sound_of {Γ : Context World} {hyps : List (Fact World)} {fact : Fact World}
+    (hypsHold : ∀ fact ∈ hyps, Entails Γ fact) (derivation : Derivation hyps fact) :
+    Entails Γ fact :=
+  fun world compatible =>
+    derivation.sound world (fun hyp mem => hypsHold hyp mem world compatible)
+
+/--
+Abstract extractor soundness. Facts are admitted through exactly two doors: a derivation in the
+calculus, or an external certificate of entailment. The runtime counterpart of the second door is a
+proof term checked by Lean's kernel.
+-/
+theorem extract_sound {Γ : Context World} {hyps : List (Fact World)}
+    {knowledge : Knowledge World Root}
+    (hypsHold : ∀ fact ∈ hyps, Entails Γ fact)
+    (generated : ∀ {fact}, fact ∈ knowledge.facts →
+      Derivation hyps fact ∨ Entails Γ fact) :
     knowledge.Sound Γ := by
   intro fact present
-  exact (generated present).sound
+  rcases generated present with derivation | certificate
+  · exact derivation.sound_of hypsHold
+  · exact certificate
+
+/-!
+## Losslessness
+
+Soundness alone is satisfied by an extractor that reports nothing. The next results say that the
+core decomposition steps also lose nothing: the decomposed facts jointly carry exactly the
+information of the hypothesis they came from.
+-/
+
+/-- Conjunction decomposition is lossless: the two components together are the conjunction. -/
+theorem entails_and_iff {Γ : Context World} {left right : Fact World} :
+    Entails Γ (fun world => left world ∧ right world) ↔ (Entails Γ left ∧ Entails Γ right) := by
+  constructor
+  · intro proof
+    exact ⟨fun world compatible => (proof world compatible).1,
+      fun world compatible => (proof world compatible).2⟩
+  · intro ⟨leftProof, rightProof⟩ world compatible
+    exact ⟨leftProof world compatible, rightProof world compatible⟩
+
+/-- One existential proof supplies a single witness shared by both projected facts. -/
+def WitnessSatisfies (Γ : Context World) (witness : ∀ world, Γ world → α)
+    (predicate : World → α → Prop) : Prop :=
+  ∀ world compatible, predicate world (witness world compatible)
+
+/-- Existential decomposition preserves witness identity across conjunction components. -/
+theorem exists_shared_witness {Γ : Context World} {left right : World → α → Prop}
+    (proof : Entails Γ (fun world => ∃ value, left world value ∧ right world value)) :
+    ∃ witness : ∀ world, Γ world → α,
+      WitnessSatisfies Γ witness left ∧ WitnessSatisfies Γ witness right := by
+  let witness := fun world compatible => Classical.choose (proof world compatible)
+  refine ⟨witness, ?_, ?_⟩
+  · intro world compatible
+    exact (Classical.choose_spec (proof world compatible)).1
+  · intro world compatible
+    exact (Classical.choose_spec (proof world compatible)).2
+
+/-- Facts about one shared witness reassemble into the original existential. -/
+theorem shared_witness_entails {Γ : Context World} {left right : World → α → Prop}
+    {witness : ∀ world, Γ world → α}
+    (leftSat : WitnessSatisfies Γ witness left)
+    (rightSat : WitnessSatisfies Γ witness right) :
+    Entails Γ (fun world => ∃ value, left world value ∧ right world value) :=
+  fun world compatible =>
+    ⟨witness world compatible, leftSat world compatible, rightSat world compatible⟩
+
+/--
+Existential decomposition through one shared witness is lossless: the pair of witness facts is
+exactly as strong as the existential hypothesis they decompose.
+-/
+theorem exists_shared_witness_iff {Γ : Context World} {left right : World → α → Prop} :
+    Entails Γ (fun world => ∃ value, left world value ∧ right world value) ↔
+      ∃ witness : ∀ world, Γ world → α,
+        WitnessSatisfies Γ witness left ∧ WitnessSatisfies Γ witness right := by
+  constructor
+  · exact exists_shared_witness
+  · intro ⟨_, leftSat, rightSat⟩
+    exact shared_witness_entails leftSat rightSat
+
+/-!
+## Counterexamples for the rejected designs
+
+Two simpler designs look plausible and are refuted by concrete contexts. These theorems are the
+reason the extractor preserves witness identity and never commits to a disjunctive branch.
+-/
+
+/--
+Splitting an existential into facts about two unrelated witnesses loses information: there is a
+consistent context in which each component is separately witnessed, yet the shared existential is
+false. So an extractor that dropped witness sharing could not reconstruct its own input.
+-/
+theorem unshared_witnesses_lossy :
+    ∃ (World : Type) (Γ : Context World) (left right : World → Bool → Prop),
+      (∃ world, Γ world) ∧
+      (∃ witness : ∀ world, Γ world → Bool, WitnessSatisfies Γ witness left) ∧
+      (∃ witness : ∀ world, Γ world → Bool, WitnessSatisfies Γ witness right) ∧
+      ¬ Entails Γ (fun world => ∃ value, left world value ∧ right world value) := by
+  refine ⟨Unit, fun _ => True, fun _ value => value = true, fun _ value => value = false,
+    ⟨(), trivial⟩, ⟨fun _ _ => true, fun _ _ => rfl⟩, ⟨fun _ _ => false, fun _ _ => rfl⟩, ?_⟩
+  intro entails
+  obtain ⟨value, isTrue, isFalse⟩ := entails () trivial
+  exact Bool.noConfusion (isTrue ▸ isFalse)
+
+/--
+Committing to one branch of a disjunction is unsound: there is a consistent context entailing a
+disjunction but neither disjunct. So a `Derivation` rule projecting a branch would falsify
+`Derivation.sound`.
+-/
+theorem branch_choice_unsound :
+    ∃ (World : Type) (Γ : Context World) (left right : Fact World),
+      (∃ world, Γ world) ∧
+      Entails Γ (fun world => left world ∨ right world) ∧
+      ¬ Entails Γ left ∧ ¬ Entails Γ right := by
+  refine ⟨Bool, fun _ => True, fun world => world = true, fun world => world = false,
+    ⟨true, trivial⟩, ?_, ?_, ?_⟩
+  · intro world _
+    cases world
+    · exact Or.inr rfl
+    · exact Or.inl rfl
+  · intro entails
+    exact Bool.noConfusion (entails false trivial)
+  · intro entails
+    exact Bool.noConfusion (entails true trivial)
+
+/-- A consequence proved in both branches may be reported without choosing a branch. -/
+theorem common_of_disjunction {Γ : Context World} {left right result : Fact World}
+    (choice : Entails Γ (fun world => left world ∨ right world))
+    (fromLeft : Entails Γ (fun world => left world → result world))
+    (fromRight : Entails Γ (fun world => right world → result world)) :
+    Entails Γ result := by
+  intro world compatible
+  exact (choice world compatible).elim
+    (fromLeft world compatible) (fromRight world compatible)
+
+/-!
+## The certified-knowledge API
+
+`CertifiedKnowledge` is the semantic image of the runtime smart-constructor API: an empty value is
+sound, a fact enters only with a certificate, and projection and truncation preserve soundness.
+The runtime `RootedKnowledge` has a private constructor precisely so that these are the only ways
+to build one.
+-/
 
 /-- A knowledge value bundled with its semantic certificate. -/
 structure CertifiedKnowledge {World : Type u} {Root : Type v}
@@ -159,32 +335,9 @@ theorem Knowledge.Sound.strengthen {Γ Γ' : Context World}
   intro fact present
   exact (sound present).strengthen stronger
 
-/-- One existential proof supplies a single witness shared by both projected facts. -/
-def WitnessSatisfies (Γ : Context World) (witness : ∀ world, Γ world → α)
-    (predicate : World → α → Prop) : Prop :=
-  ∀ world compatible, predicate world (witness world compatible)
-
-/-- Existential decomposition preserves witness identity across conjunction components. -/
-theorem exists_shared_witness {Γ : Context World} {left right : World → α → Prop}
-    (proof : Entails Γ (fun world => ∃ value, left world value ∧ right world value)) :
-    ∃ witness : ∀ world, Γ world → α,
-      WitnessSatisfies Γ witness left ∧ WitnessSatisfies Γ witness right := by
-  let witness := fun world compatible => Classical.choose (proof world compatible)
-  refine ⟨witness, ?_, ?_⟩
-  · intro world compatible
-    exact (Classical.choose_spec (proof world compatible)).1
-  · intro world compatible
-    exact (Classical.choose_spec (proof world compatible)).2
-
-/-- A consequence proved in both branches may be reported without choosing a branch. -/
-theorem common_of_disjunction {Γ : Context World} {left right result : Fact World}
-    (choice : Entails Γ (fun world => left world ∨ right world))
-    (fromLeft : Entails Γ (fun world => left world → result world))
-    (fromRight : Entails Γ (fun world => right world → result world)) :
-    Entails Γ result := by
-  intro world compatible
-  exact (choice world compatible).elim
-    (fromLeft world compatible) (fromRight world compatible)
+/-!
+## Inconsistency
+-/
 
 /-- A context is consistent when it admits at least one possible world. -/
 def Consistent (Γ : Context World) : Prop :=

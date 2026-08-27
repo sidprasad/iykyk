@@ -24,13 +24,21 @@ root: source
 witnesses:
   •0 : Vertex := Classical.choose route
 facts:
-  edge source (Classical.choose route)
-  edge (Classical.choose route) target
+  [0] edge source (Classical.choose route)
+  [1] edge (Classical.choose route) target
+certificate: ∃ w0, edge source w0 ∧ edge w0 target
 status: complete
 ```
 
 The same choice term appears in both facts, so the shared identity of the unknown middle vertex is
-preserved. Each `KnownFact` contains the proposition and a proof term checked by Lean.
+preserved. Each `KnownFact` contains the proposition and a proof term checked at insertion time.
+
+The `certificate` line is the whole result as one proposition — the design document's `⟦K⟧ₜ`: the
+facts conjoined, with each shared witness abstracted back into a single existential binder. On
+every extraction, its one combined proof is checked by `Lean.Kernel.check` (the kernel itself, not
+the elaborator) in the captured local context. So the central contract, that the context entails
+everything the extractor reports, is not a claim about the implementation being bug-free; it is
+re-established by the kernel on each run.
 
 ## Lightweight hooks
 
@@ -64,16 +72,29 @@ against the proposition before the fact is admitted.
 
 ## Formal metatheory
 
-The lightweight formal model lives separately in [`metatheory/`](./metatheory). It defines contexts
-as sets of possible worlds and proves `extract_sound`: if every emitted fact has a derivation from a
-checked certificate, conjunction elimination, or forward application, then every emitted fact holds
-in every world compatible with the context.
+The formal model lives separately in [`metatheory/`](./metatheory). It defines contexts as sets of
+possible worlds and proves three kinds of results, each falsifiable:
 
-It also proves that projection, bounded/truncated prefixes, and context strengthening preserve
-soundness; that existential decomposition uses one shared witness; that branch-common consequences
-are valid; and that inconsistency is exactly the absence of a compatible world. The only deliberately
-trusted bridge is interpreting a checked Lean `Expr` proof as a semantic certificate; the project
-does not attempt to formalize Lean's kernel.
+- **Soundness.** `Derivation` is a syntactic calculus over hypothesis facts — membership,
+  conjunction elimination, universal instantiation, forward application — with no rule that accepts
+  an unchecked semantic certificate. `Derivation.sound` proves every rule preserves entailment;
+  `extract_sound` extends this to knowledge values whose remaining facts carry certificates.
+- **Losslessness.** `entails_and_iff` and `exists_shared_witness_iff` prove that conjunction
+  splitting and shared-witness existential decomposition preserve exactly the information of the
+  hypothesis they decompose. Soundness alone would be satisfied by reporting nothing; these are the
+  properties the trivial extractor fails.
+- **Counterexamples.** `unshared_witnesses_lossy` proves that splitting an existential into facts
+  about unrelated witnesses loses information, and `branch_choice_unsound` proves that reporting
+  one branch of a disjunction is unsound. The two central design decisions are forced, not
+  aesthetic.
+
+The runtime is connected to this model in two enforced ways, documented in
+[`metatheory/README.md`](./metatheory/README.md): `RootedKnowledge` has a private constructor, so
+the only ways to build one are checked smart constructors that mirror the proved
+`CertifiedKnowledge` operations one for one; and each extraction result's reified certificate is
+checked by the kernel per run. The deliberately trusted remainder is interpreting a kernel-checked
+`Expr` as a semantic statement; formalizing Lean's kernel in Lean is out of scope (and a reflection
+principle for it is impossible internally).
 
 ## What works
 
@@ -83,7 +104,12 @@ does not attempt to formalize Lean's kernel.
 - bounded inference with a distinct `truncated` status;
 - preservation of disjunctions without choosing a branch;
 - direct inconsistency detection, with broader proof search when Aesop is selected;
-- projection to the connected component containing the selected root; and
+- projection to the connected component containing the selected root;
+- an unforgeable `RootedKnowledge`: private constructors, so facts and witnesses enter only through
+  checked smart constructors mirroring the metatheory's certified operations;
+- per-run kernel certification: the result is reified into one existentially quantified
+  conjunction whose proof `Lean.Kernel.check` verifies in the captured scope (see
+  `Iykyk/Certify.lean`, on by default, `kernelCheck := false` to disable); and
 - a programmatic `Iykyk.extract` API plus consumer-neutral queries in `Iykyk.Query`.
 
 The first representation is intentionally small. It stores Lean `Expr`s and proof terms in their
@@ -101,7 +127,8 @@ Academic influences are flagged in the module comment of the file where each ide
 | Constraint programming | `Iykyk/Query.lean` | Query accumulated constraints before values are complete. |
 | Database chase | `Iykyk/Extract.lean` | Make forward rounds and their bounds explicit. |
 | Abstract interpretation / shape analysis | `Iykyk/Extract.lean` | Return a sound finite view and report truncation separately. |
-| Proof-producing automation / proof-carrying code | `Iykyk/Automation.lean` | Keep automation behind a checked certificate boundary. |
+| Proof-producing automation / proof-carrying code | `Iykyk/Automation.lean`, `Iykyk/Certify.lean` | Keep automation behind a checked certificate boundary; let the kernel re-check the result. |
+| LCF-style kernels | `Iykyk/Knowledge.lean` | Make certified values unforgeable outside a small checked interface. |
 | Possible-world semantics / refinement invariants | `metatheory/IykykMetatheory.lean` | State and prove the extraction soundness contract. |
 | Typed holes / live programming | `Iykyk/Tactic.lean` | Expose useful semantics while a proof is in progress. |
 
@@ -114,6 +141,7 @@ lake build
 lake env lean Iykyk/Examples/Graph.lean
 lake env lean Iykyk/Examples/Bounded.lean
 lake env lean Iykyk/Examples/Automation.lean
+lake env lean Iykyk/Examples/Certified.lean
 ```
 
 The project uses Lean 4.33.1 and pins Aesop 4.33.0 (plus its Batteries dependency) through Lake.

@@ -1,6 +1,7 @@
 module
 
 public import Iykyk.Knowledge
+public import Iykyk.Certify
 public import Iykyk.Automation
 public import Iykyk.Extract
 public import Iykyk.Query
