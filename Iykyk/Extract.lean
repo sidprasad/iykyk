@@ -203,7 +203,7 @@ def projectToRoot (knowledge : RootedKnowledge) : MetaM RootedKnowledge := do
 /-- Extract finite, proof-backed knowledge about `root` without mutating the proof goal. -/
 def extract (root : Expr) (config : Config := {}) : MetaM ExtractionResult := do
   let root ← normalize root
-  let scope ← getLCtx
+  let scope ← instantiateLCtxMVars (← getLCtx)
   let initial ← collectContext config { knowledge := .empty root scope }
   let (state, truncatedBeforeCandidates) ← saturate config initial
   let state ← proveCandidates config state
