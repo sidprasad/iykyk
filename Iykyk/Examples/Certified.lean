@@ -40,6 +40,15 @@ example (source target : Vertex)
   iykyk source
   trivial
 
+-- A certificate extracted after a local proof has a fully instantiated scope,
+-- so the combined certificate is accepted by the kernel.
+example (source target middle : Vertex)
+    (left : edge source middle) (right : edge middle target) : True := by
+  have route : ∃ middle, edge source middle ∧ edge middle target :=
+    ⟨middle, left, right⟩
+  iykyk source
+  trivial
+
 open Lean Meta
 
 -- `RootedKnowledge` is unforgeable: its constructor is private, and the only way to insert a
