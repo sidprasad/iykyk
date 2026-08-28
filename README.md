@@ -48,8 +48,17 @@ The extraction policy stays small, but callers can opt into familiar Lean tools:
 -- Apply an explicit forward rule.
 iykyk source using [step]
 
--- Normalize established facts with simp.
+-- Treat suitable raw proof hypotheses as forward rules.
+iykyk source using *
+
+-- Let any established rule-shaped fact fire in later rounds.
+iykyk source using facts
+
+-- Normalize established facts with Lean's standard simp set and simprocs.
 iykyk source with [simp]
+
+-- Use only the listed simp rules, without the global simp set or default simprocs.
+iykyk source with [simp only [reverse]]
 
 -- Ask Aesop to prove one proposition worth exposing.
 iykyk source deriving [Reachable source] with [aesop]
@@ -58,17 +67,34 @@ iykyk source deriving [Reachable source] with [aesop]
 iykyk source using [step] deriving [Reachable source] with [simp, aesop]
 ```
 
-`using` tells iykyk how to extend its finite forward search. `deriving` names propositions the
-caller cares about; an unproved candidate is simply omitted and remains unknown. `with` selects
-proof-producing engines:
+Plain `iykyk source` does not apply implication hypotheses as rules and does not invoke `simp` or
+Aesop. Each extension is explicit:
 
-- `simp` transports proofs while normalizing established facts and can discharge named candidates;
+- `using [rules]` applies exactly the listed forward rules;
+- `using *` also selects suitable raw proof hypotheses from the local context as rules;
+- `using facts` lets every established rule-shaped fact fire, including implications exposed by
+  conjunction or equivalence decomposition. This subsumes `using *` and runs to a bounded fixed
+  point, so newly derived rules may fire in later rounds;
+- `deriving` names propositions the caller cares about; an unproved candidate is simply omitted
+  and remains unknown; and
+- `with` selects proof-producing engines.
+
+The engine-specific choices are explicit too:
+
+- `simp` uses Lean's standard simp theorems and default simprocs while transporting proofs and can
+  discharge named candidates;
+- `simp only [rules]` uses just those rules (plus Lean's reflexivity builtins), with neither the
+  global simp set nor default simprocs; and
 - `aesop` performs bounded search for named candidates and for `False` when checking consistency.
 
 These are hooks, not a second automation language. iykyk still decides what its public knowledge
 object contains, preserves witnesses, applies the configured bounds, and projects to the selected
 root. A result from either engine crosses the boundary only as a Lean proof term, which is checked
-against the proposition before the fact is admitted.
+against the proposition before the fact is admitted. `using facts` needs repeated rounds because a
+round may establish both a new rule and a premise for it; `maxRounds` and `maxFacts` keep that search
+finite, and `truncated` reports when a bound stops it. Provenance would explain why each fact was
+found, but it is not part of the trust boundary: the proof term and final kernel-checked certificate
+establish that the reported fact is true.
 
 ## Formal metatheory
 
@@ -105,8 +131,8 @@ principle for it is impossible internally).
 - conjunction splitting and shared existential witnesses;
 - reuse of an in-scope existential witness when its structural facts are already known;
 - decomposition of an equivalence into its two checked implication directions;
-- explicitly supplied Horn-style forward rules with `iykyk root using [rule₁, rule₂]`;
-- opt-in `simp` normalization and bounded Aesop candidate proving;
+- explicit forward rules, raw-local-rule discovery, and bounded established-fact saturation;
+- opt-in standard `simp`, restricted `simp only`, and bounded Aesop candidate proving;
 - bounded inference with a distinct `truncated` status;
 - preservation of disjunctions without choosing a branch, plus checked disjunctive syllogism;
 - direct inconsistency detection, with broader proof search when Aesop is selected;

@@ -38,7 +38,7 @@ soundness. Inconsistency remains a separate result because it entails every fact
 | `Iff.mp` / `Iff.mpr` directions | `Derivation.iffForward` / `iffBackward`, `entails_equivalence_iff` |
 | `Or.resolve_left` / `resolve_right` | `Derivation.resolveLeft` / `resolveRight` |
 | recursive conjunction/existential splitting | `Formula.decompose`, `decompose_sound`, `decompose_lossless` |
-| rule instantiation and application (`applyRule`) | `Derivation.instantiate`, `Derivation.forward` |
+| explicit, raw-local, or established rule application (`applyRule`) | `Derivation.instantiate`, `Derivation.forward` |
 | existential decomposition via `Classical.choose` | `exists_shared_witness_iff` |
 | engine-proved candidate (`proveCandidate`) | certificate disjunct of `extract_sound` |
 | `RootedKnowledge.empty` / `addFact` | `CertifiedKnowledge.empty` / `add` |

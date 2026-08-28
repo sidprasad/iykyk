@@ -234,15 +234,32 @@ automation language:
 
 ```lean
 iykyk source using [step]
+iykyk source using *
+iykyk source using facts
 iykyk source with [simp]
+iykyk source with [simp only [reverse]]
 iykyk source deriving [Reachable source] with [aesop]
 ```
 
-Here `simp` can normalize established facts, while `simp` and Aesop can try to
-prove caller-named candidates. Aesop may also search for a contradiction. These
-are explicitly selected, bounded hooks. They can improve which true facts the
-extractor finds, but they do not change the representation, relevance policy,
-or certification boundary.
+Plain extraction does not invoke automation or treat implication hypotheses as
+rules. `using [step]` applies an explicit rule list. `using *` selects suitable
+raw proof hypotheses as rules, while `using facts` additionally feeds every
+established rule-shaped fact back into later forward rounds. The latter is
+useful when conjunction or equivalence decomposition exposes an implication,
+but it requires a fixed point: one round may expose a rule, another may derive
+its conclusion, and that conclusion may enable a further rule. The existing
+fact and round limits keep this process finite and make early termination
+visible as `truncated`.
+
+Here standard `simp` can normalize established facts, while `simp` and Aesop
+can try to prove caller-named candidates. `simp only [rules]` instead excludes
+the global simp set and default simprocs. Aesop may also search for a
+contradiction. These are explicitly selected, bounded hooks. They can improve
+which true facts the extractor finds, but they do not change the
+representation, relevance policy, or certification boundary. A future
+provenance layer could make the search path easier to inspect, but trust does
+not depend on that trace: every admitted fact already carries a proof and the
+combined result is checked by Lean's kernel.
 
 The certificate is therefore an enforcement mechanism, not the main research
 claim. It prevents a bug or heuristic from silently turning a plausible fact
