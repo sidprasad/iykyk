@@ -202,27 +202,40 @@ private def isDefEqPreservingState (left right : Expr) : MetaM Bool := do
   saved.restore
   return result
 
-private def resolveDisjunctionsOnce (config : Config) (state : BuildState) :
+/--
+Resolve disjunctions against established negations until no further branch is exposed.
+
+Iterating to a local fixpoint here, rather than making a single pass per saturation round, means a
+chain of dependent resolutions costs one round in total instead of one round per link. The work
+stays bounded: every productive pass admits at least one fact, and `pushFact` refuses to grow the
+knowledge past `maxFacts`, so no more than that many passes can be productive.
+-/
+private def resolveDisjunctions (config : Config) (state : BuildState) :
     MetaM (BuildState × Bool) := do
   let mut next := state
-  let mut added := false
-  for disjunction in state.knowledge.facts do
-    let proposition ← normalize disjunction.proposition
-    if proposition.isAppOfArity ``Or 2 then
-      let disjuncts := proposition.getAppArgs
-      for negative in state.knowledge.facts do
-        if let some domain ← negatedDomain? negative.proposition then
-          if ← isDefEqPreservingState domain disjuncts[0]! then
-            let proof ← mkAppM ``Or.resolve_left #[disjunction.proof, negative.proof]
-            let before := next.knowledge.facts.size
-            next ← decompose config proof disjuncts[1]! next
-            added := added || next.knowledge.facts.size > before
-          if ← isDefEqPreservingState domain disjuncts[1]! then
-            let proof ← mkAppM ``Or.resolve_right #[disjunction.proof, negative.proof]
-            let before := next.knowledge.facts.size
-            next ← decompose config proof disjuncts[0]! next
-            added := added || next.knowledge.facts.size > before
-  return (next, added)
+  let mut addedAny := false
+  for _ in [0:config.maxFacts + 1] do
+    let mut progress := false
+    for disjunction in next.knowledge.facts do
+      let proposition ← normalize disjunction.proposition
+      if proposition.isAppOfArity ``Or 2 then
+        let disjuncts := proposition.getAppArgs
+        for negative in next.knowledge.facts do
+          if let some domain ← negatedDomain? negative.proposition then
+            if ← isDefEqPreservingState domain disjuncts[0]! then
+              let proof ← mkAppM ``Or.resolve_left #[disjunction.proof, negative.proof]
+              let before := next.knowledge.facts.size
+              next ← decompose config proof disjuncts[1]! next
+              progress := progress || next.knowledge.facts.size > before
+            if ← isDefEqPreservingState domain disjuncts[1]! then
+              let proof ← mkAppM ``Or.resolve_right #[disjunction.proof, negative.proof]
+              let before := next.knowledge.facts.size
+              next ← decompose config proof disjuncts[0]! next
+              progress := progress || next.knowledge.facts.size > before
+    if !progress then
+      return (next, addedAny)
+    addedAny := true
+  return (next, addedAny)
 
 private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (BuildState × Bool) := do
   let mut next := state
@@ -238,7 +251,7 @@ private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (Build
         let before := next.knowledge.facts.size
         next ← pushFact next config candidate.proposition candidate.proof
         added := added || next.knowledge.facts.size > before
-  let (resolvedState, resolved) ← resolveDisjunctionsOnce config next
+  let (resolvedState, resolved) ← resolveDisjunctions config next
   added := added || resolved
   return (resolvedState, added)
 
@@ -325,9 +338,14 @@ def extract (root : Expr) (config : Config := {}) : MetaM ExtractionResult := do
   let config := { config with rules := config.rules ++ localRules }
   let scope ← instantiateLCtxMVars (← getLCtx)
   let initial ← collectContext config { knowledge := .empty root scope }
-  let (state, truncatedBeforeCandidates) ← saturate config initial
+  -- The first pass's verdict is deliberately not carried forward. `saturate` reports "I may not
+  -- have finished", and the second pass resumes from exactly where the first stopped, so if that
+  -- pass converges the final state is a genuine fixpoint however many rounds the first one needed.
+  -- A real fact-limit truncation still reaches this point: `hitFactLimit` is sticky in
+  -- `BuildState` and every `saturate` returns it.
+  let (state, _) ← saturate config initial
   let state ← proveCandidates config state
-  let (state, truncatedAfterCandidates) ← saturate config state
+  let (state, truncated) ← saturate config state
   let automatedContradiction ← if config.uses .aesop then
     proveCandidate config (.const ``False [])
   else
@@ -335,8 +353,7 @@ def extract (root : Expr) (config : Config := {}) : MetaM ExtractionResult := do
   let result ← if let some proof := automatedContradiction.or (← contradiction? state) then
     pure (ExtractionResult.inconsistent (← Inconsistency.ofProof root scope proof))
   else
-    let knowledge := state.knowledge.withTruncated
-      (truncatedBeforeCandidates || truncatedAfterCandidates)
+    let knowledge := state.knowledge.withTruncated truncated
     let knowledge ← if config.rootOnly then projectToRoot knowledge else pure knowledge
     pure (ExtractionResult.knowledge knowledge)
   if config.kernelCheck then

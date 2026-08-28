@@ -92,7 +92,10 @@ object contains, preserves witnesses, applies the configured bounds, and project
 root. A result from either engine crosses the boundary only as a Lean proof term, which is checked
 against the proposition before the fact is admitted. `using facts` needs repeated rounds because a
 round may establish both a new rule and a premise for it; `maxRounds` and `maxFacts` keep that search
-finite, and `truncated` reports when a bound stops it. Provenance would explain why each fact was
+finite, and `truncated` reports when a bound stopped it — that is, when extraction ended without
+reaching a fixpoint. Disjunctive resolution is exempt from the round budget: it can only expose
+branches of disjunctions already present, never invent new terms, so it runs to a local fixpoint
+within a single round and a chain of dependent resolutions costs one round however long it is. Provenance would explain why each fact was
 found, but it is not part of the trust boundary: the proof term and final kernel-checked certificate
 establish that the reported fact is true.
 
