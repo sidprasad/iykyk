@@ -96,6 +96,11 @@ private partial def decompose (config : Config) (proof proposition : Expr)
     let args := proposition.getAppArgs
     let state ← decompose config (← mkAppM ``And.left #[proof]) args[0]! state
     decompose config (← mkAppM ``And.right #[proof]) args[1]! state
+  else if proposition.isAppOfArity ``Iff 2 then
+    let forward ← mkAppM ``Iff.mp #[proof]
+    let state ← decompose config forward (← inferType forward) state
+    let backward ← mkAppM ``Iff.mpr #[proof]
+    decompose config backward (← inferType backward) state
   else if proposition.isAppOfArity ``Exists 2 then
     let args := proposition.getAppArgs
     if ← existentialAlreadyKnown args[0]! args[1]! state.knowledge.facts then
