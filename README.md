@@ -70,7 +70,7 @@ iykyk source using [step] deriving [Reachable source] with [simp, aesop]
 Plain `iykyk source` does not apply implication hypotheses as rules and does not invoke `simp` or
 Aesop. Each extension is explicit:
 
-- `using [rules]` applies exactly the listed forward rules;
+- `using [rules]` applies exactly the listed forward rules, with an `Iff` firing in both directions;
 - `using *` also selects suitable raw proof hypotheses from the local context as rules;
 - `using facts` lets every established rule-shaped fact fire, including implications exposed by
   conjunction or equivalence decomposition. This subsumes `using *` and runs to a bounded fixed

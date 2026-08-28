@@ -162,6 +162,40 @@ example (x : Vertex) (P Q : Vertex → Prop) (equiv : P x ↔ Q x) (present : P 
   iykyk x using facts
   trivial
 
+/--
+info: iykyk
+  root: x
+  witnesses: (none)
+  facts:
+    [0] P x → Q x
+    [1] Q x → P x
+    [2] P x
+    [3] Q x
+  certificate: (P x → Q x) ∧ (Q x → P x) ∧ P x ∧ Q x
+  status: complete
+-/
+#guard_msgs in
+example (x : Vertex) (P Q : Vertex → Prop) (equiv : P x ↔ Q x) (present : P x) : True := by
+  iykyk x using [equiv]
+  trivial
+
+/--
+info: iykyk
+  root: x
+  witnesses: (none)
+  facts:
+    [0] P x → Q x
+    [1] Q x → P x
+    [2] Q x
+    [3] P x
+  certificate: (P x → Q x) ∧ (Q x → P x) ∧ Q x ∧ P x
+  status: complete
+-/
+#guard_msgs in
+example (x : Vertex) (P Q : Vertex → Prop) (equiv : P x ↔ Q x) (present : Q x) : True := by
+  iykyk x using [equiv]
+  trivial
+
 example (source target : List Nat) (edge : List Nat → List Nat → Prop)
     (route : edge source target.reverse.reverse) : True := by
   iykyk source with [simp]
