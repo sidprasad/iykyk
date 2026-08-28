@@ -76,13 +76,15 @@ The formal model lives separately in [`metatheory/`](./metatheory). It defines c
 possible worlds and proves three kinds of results, each falsifiable:
 
 - **Soundness.** `Derivation` is a syntactic calculus over hypothesis facts — membership,
-  conjunction elimination, universal instantiation, forward application — with no rule that accepts
-  an unchecked semantic certificate. `Derivation.sound` proves every rule preserves entailment;
-  `extract_sound` extends this to knowledge values whose remaining facts carry certificates.
-- **Losslessness.** `entails_and_iff` and `exists_shared_witness_iff` prove that conjunction
-  splitting and shared-witness existential decomposition preserve exactly the information of the
-  hypothesis they decompose. `Formula.decompose_sound` and `Formula.decompose_lossless` verify the
-  pure recursive decomposition algorithm for nested atoms, conjunctions, and existentials.
+  conjunction and equivalence elimination, universal instantiation, forward application — with no
+  rule that accepts an unchecked semantic certificate. `Derivation.sound` proves every rule
+  preserves entailment; `extract_sound` extends this to knowledge values whose remaining facts
+  carry certificates.
+- **Losslessness.** `entails_and_iff`, `entails_equivalence_iff`, and
+  `exists_shared_witness_iff` prove that conjunction splitting, equivalence directions, and
+  shared-witness existential decomposition preserve exactly the information of the hypothesis they
+  decompose. `Formula.decompose_sound` and `Formula.decompose_lossless` verify the pure recursive
+  decomposition algorithm for nested atoms, conjunctions, and existentials.
   Soundness alone would be satisfied by reporting nothing; these are the properties the trivial
   extractor fails.
 - **Counterexamples.** `unshared_witnesses_lossy` proves that splitting an existential into facts
@@ -102,6 +104,7 @@ principle for it is impossible internally).
 
 - conjunction splitting and shared existential witnesses;
 - reuse of an in-scope existential witness when its structural facts are already known;
+- decomposition of an equivalence into its two checked implication directions;
 - explicitly supplied Horn-style forward rules with `iykyk root using [rule₁, rule₂]`;
 - opt-in `simp` normalization and bounded Aesop candidate proving;
 - bounded inference with a distinct `truncated` status;

@@ -78,6 +78,14 @@ inductive Derivation {World : Type u} (hyps : List (Fact World)) : Fact World �
   | andRight {left right : Fact World}
       (proof : Derivation hyps (fun world => left world ∧ right world)) :
       Derivation hyps right
+  /-- Forward direction of a derived equivalence. -/
+  | iffForward {left right : Fact World}
+      (proof : Derivation hyps (fun world => left world ↔ right world)) :
+      Derivation hyps (fun world => left world → right world)
+  /-- Backward direction of a derived equivalence. -/
+  | iffBackward {left right : Fact World}
+      (proof : Derivation hyps (fun world => left world ↔ right world)) :
+      Derivation hyps (fun world => right world → left world)
   /-- Instantiation of a universally quantified rule at a chosen value. -/
   | instantiate {α : Sort v} {predicate : World → α → Prop} (value : α)
       (proof : Derivation hyps (fun world => ∀ x, predicate world x)) :
@@ -98,6 +106,8 @@ theorem Derivation.sound {hyps : List (Fact World)} {fact : Fact World} :
   | .hyp mem => fun _ compatible => compatible _ mem
   | .andLeft proof => fun world compatible => (proof.sound world compatible).1
   | .andRight proof => fun world compatible => (proof.sound world compatible).2
+  | .iffForward proof => fun world compatible => (proof.sound world compatible).mp
+  | .iffBackward proof => fun world compatible => (proof.sound world compatible).mpr
   | .instantiate value proof => fun world compatible => proof.sound world compatible value
   | .forward premiseProof ruleProof => fun world compatible =>
       ruleProof.sound world compatible (premiseProof.sound world compatible)
@@ -143,6 +153,18 @@ theorem entails_and_iff {Γ : Context World} {left right : Fact World} :
       fun world compatible => (proof world compatible).2⟩
   · intro ⟨leftProof, rightProof⟩ world compatible
     exact ⟨leftProof world compatible, rightProof world compatible⟩
+
+/-- Equivalence decomposition is lossless: its two implication directions reconstruct it. -/
+theorem entails_equivalence_iff {Γ : Context World} {left right : Fact World} :
+    Entails Γ (fun world => left world ↔ right world) ↔
+      (Entails Γ (fun world => left world → right world) ∧
+        Entails Γ (fun world => right world → left world)) := by
+  constructor
+  · intro proof
+    exact ⟨fun world compatible => (proof world compatible).mp,
+      fun world compatible => (proof world compatible).mpr⟩
+  · intro ⟨forward, backward⟩ world compatible
+    exact ⟨forward world compatible, backward world compatible⟩
 
 /-- One existential proof supplies a single witness shared by both projected facts. -/
 def WitnessSatisfies (Γ : Context World) (witness : ∀ world, Γ world → α)
