@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/sidprasad/iykyk/actions/workflows/ci.yml/badge.svg)](https://github.com/sidprasad/iykyk/actions/workflows/ci.yml)
 
-`iykyk` extracts finite, proof-backed knowledge about a selected Lean term from the current proof
-context. It is an early prototype of the design in [DESIGN.md](./DESIGN.md).
+`iykyk` is a semantic extraction layer for Lean proof contexts. It turns what Lean knows about a
+selected term into a finite program object that other tools can inspect, without changing the
+caller's proof state. The object is proof-backed: its facts carry Lean proof terms, and its combined
+certificate can be checked by Lean's kernel.
+
 
 ```lean
 import Iykyk

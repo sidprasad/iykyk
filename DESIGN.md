@@ -1,33 +1,46 @@
-# Extracting Partial Values from Proof Contexts
+# iykyk: Semantic Extraction from Lean Proof Contexts
 
-## Thesis
 
-A Lean context does more than list hypotheses. It describes what is currently
-known about the values in scope. This project extracts that knowledge into an
-ordinary, proof-backed object before any consumer decides how to query,
-visualize, compare, or serialize it.
+`iykyk` is a semantic extraction layer for Lean proof contexts. Given a local context `Γ` and a
+selected term `t`, it produces a finite program object describing facts that `Γ` establishes about
+`t` and its known surroundings. The object preserves the identity of existentially known values,
+distinguishes missing knowledge from falsehood, reports bounded search explicitly, and carries Lean
+proof terms for every fact. Extraction reads the context without changing the caller's proof state,
+and a combined certificate for the result is checked by Lean's kernel.
 
-The selected value may not be computable or fully determined. Extraction is
-still useful because a context can establish some of its structure and
-relations. Missing information remains missing. Every fact that does appear is
-accompanied by a Lean proof.
+Lean already contains all of the essential proof mechanisms used here. `rcases` can expose an
+existential witness, `choose` can name one, `simp` can normalize propositions, Aesop can search for
+proofs, the metaprogramming API exposes the local context, and the kernel checks proof terms. `iykyk`
+does not replace or improve those mechanisms as theorem-proving procedures.
 
-## A motivating example
+Instead,
 
-Consider the middle of a graph-theory proof:
+The contribution is an abstraction boundary: standard Lean operations are composed into a
+root-focused, proof-backed, explicitly incomplete semantic snapshot. A tactic normally leaves its
+result distributed across a changed proof state. iykyk is an idempotent observation of that state:
+it records selected consequences as one value without consuming the hypotheses it observes. The
+value can also express extraction-level outcomes—such as truncation or deliberate refusal to
+display arbitrary consequences of an inconsistent context—that are not themselves hypotheses in
+`Γ`. The novelty claim is therefore architectural rather than foundational: witness extraction,
+proof search, and kernel checking are existing ingredients; their organization into this
+particular reusable object is the proposal being evaluated.
 
-```lean
-variable {Vertex : Type}
-variable (edge : Vertex → Vertex → Prop)
+## The Problem
 
-example (source target : Vertex)
-    (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
-  -- What do we know about `source` here?
-  trivial
+A Lean proof context is usually presented as a list of local declarations followed by a goal:
+
+```text
+source target : Vertex
+route : ∃ middle, edge source middle ∧ edge middle target
+⊢ True
 ```
 
-There is no concrete graph to evaluate, and the context does not identify the
-middle vertex. It nevertheless establishes a small, useful piece of graph:
+This view is useful for continuing the proof (?), but does not directly answer semantic inspection
+questions like:
+
+> What does this context tell me about `source`?
+
+The answer is not merely the syntax of `route`. The context establishes a small graph fragment:
 
 ```text
 root: source
@@ -37,37 +50,184 @@ facts:
   edge middle target
 ```
 
-The identity of `middle` matters. The two edge facts refer to the same unknown
-vertex. Replacing it with two unrelated placeholders would lose knowledge;
-inventing a concrete vertex would add knowledge that the proof does not have.
+- The `middle` vertex is not (whats the right word here? concrete), but it is necessary if one were to []...]
+- Replacing it with two unrelated placeholders loses information; inventing a concrete
+vertex adds information the proof does not contain.
 
-This result is not a proof-state display. It does not show the goal, tactic
-state, or syntax of `route`. It is a finite description of `source` and its
-known surroundings, extracted from the proof state. A graph viewer could draw
-it, a query tool could inspect it, and another tactic could compare it with the
-knowledge available later in the proof.
+- Nor is the answer a partially constructed `Vertex`. The interesting knowledge crosses the type
+boundary of the selected term: `edge source middle` is a relation, not a field of `source`.
+- A useful representation must therefore describe guaranteed structure and relations around a value, not only
+attempt to reconstruct the value itself.
 
-## The object of study
+This distinction appears throughout interactive programming. A value may be incomplete while its
+surrounding constraints already determine useful properties. The immediate design question is how
+to make those properties ordinary, finite, inspectable data without claiming more than Lean has
+proved.
 
-Let `Γ` be a Lean context and `t` a selected term. A valuation `ρ` satisfies
-`Γ` when it assigns values to the variables in the context in a way that makes
-all of its assumptions true. Each satisfying valuation gives one possible
-meaning to `t`.
+## Lean already provides the mechanical bits we need.
 
-We can therefore read `(Γ, t)` as a family of possible completions:
+The design starts from a skeptical position: Lean can already expose everything in
+the example above.
+
+### 2.1 `rcases` and existential elimination
+
+`rcases`' recursive pattern language is a convenient way to open existentials, conjunctions, structures, and alternatives.
+A proof author can write:
+
+```lean
+example (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
+  rcases route with ⟨middle, sourceToMiddle, middleToTarget⟩
+  -- middle          : Vertex
+  -- sourceToMiddle  : edge source middle
+  -- middleToTarget  : edge middle target
+  trivial
+```
+
+Here, `rcases` restructures the proof state. It applies the relevant eliminators and introduces fresh
+local declarations for the components of the selected hypothesis. 
+
+- While very convenient, this state transition is why `rcases` is not a great tool for observation or inspection. 
+- It consumes the selected occurrence of `route` while replacing it with the components; running the same command a
+second time does not perform the same read. 
+- Asking “what did the context know about `source` here,
+and what did it know three tactics ago?” should not require rewriting the proof at either point.
+
+**Semantic inspection needs a non-interfering read whose result can be retained and compared.**
+
+This is not a competing notion of semantic extraction. It is one of the mechanisms iykyk can use.
+The implementation currently constructs the term-level equivalent:
+
+```lean
+let middle := Classical.choose route
+have body : edge source middle ∧ edge middle target := Classical.choose_spec route
+have sourceToMiddle : edge source middle := body.left
+have middleToTarget : edge middle target := body.right
+```
+
+In `Iykyk/Extract.lean`, these operations are built as `Expr`s using `Classical.choose`,
+`Classical.choose_spec`, `And.left`, and `And.right`. Both edge facts therefore contain the same
+choice term.
+
+The reason to use these terms instead of literally executing `rcases` is representational, not
+logical. `rcases` introduces a fresh local variable in an extended proof context. Such a free
+variable cannot escape that scope unless the result remains under its binder or is abstracted over
+it. `Classical.choose route` is already a term in the original context, so it can occur directly in
+stored fact expressions. During final certification, iykyk abstracts the choice term back into one
+existential binder.
+
+
+### 2.2 `choose`
+
+At term level, `Exists.choose h` selects a witness for `h : ∃ x, P x`, while
+`Exists.choose_spec h` proves the predicate for that witness. Mathlib's `choose` tactic supplies a
+convenient proof-state interface and also supports Skolemization, for example turning
+
+```lean
+h : ∀ x, ∃ y, R x y
+```
+
+into a choice function and its specification.
+
+iykyk does not obtain witnesses that `choose` cannot obtain. It directly constructs the underlying
+terms because it needs control over how witness identity appears in the stored expressions. Since
+`Exists` lives in `Prop`, a classical chosen witness is generally noncomputable: it is a symbolic
+Lean term for proof and metaprogramming, not executable data recovered from an erased proof.
+
+### 2.3 `simp`, Aesop, and other automation
+
+`simp` is proof-producing normalization. Aesop is proof-producing search over a configurable rule
+set. Both can establish useful propositions, and iykyk exposes small opt-in hooks for them.
+
+Neither engine by itself specifies a semantic snapshot. A proof procedure answers questions such
+as “can this goal be transformed?” or “can this candidate proposition be proved?” It does not
+decide which term is the root of an extracted object, how existential identities appear across
+facts, which established facts are relevant, when an incomplete search is returned, or what public
+representation records the answer.
+
+### 2.4 The metaprogramming API and proof-state interfaces
+
+Lean's `LocalContext` API provides the raw declarations needed to build iykyk. Proof-state displays
+render those declarations for humans. Libraries such as ProofWidgets support custom and
+domain-specific presentations.
+
+These are lower- and upper-level interfaces around the proposed boundary. A `LocalContext` is raw
+input: each caller still has to decide how to decompose propositions, preserve scope, and select
+relevant consequences. Running `rcases` and then reading the new hypotheses exposes the syntax the
+proof author chose to produce; it does not compute the semantic neighborhood of a selected term.
+`projectToRoot` instead computes a connected component through established fact arguments.
+
+A local context also has no declaration representing “this bounded observation was truncated” or
+“`Γ` is contradictory, so the extractor is deliberately returning no ordinary knowledge.” Those
+are properties of the extraction process. They exist in iykyk because extraction returns an
+`ExtractionResult`, rather than pretending that every meaningful outcome must be another local
+hypothesis. A widget is presentation: it still needs some account of the meaning to display. iykyk
+proposes the small semantic object between raw declarations and presentation.
+
+### 2.5 Summary of the comparison
+
+| Existing mechanism | What it already solves | What iykyk uses it for |
+| --- | --- | --- |
+| `cases`, `rcases`, `obtain` | Decompose a selected hypothesis by changing the proof state | The model for safe structural decomposition, used without exposing mutation as the API |
+| `Exists.choose`, mathlib `choose` | Select witnesses and prove their specifications | Stable symbolic witness terms shared across facts |
+| `simp` | Normalize propositions while transporting proofs | Optional fact normalization and candidate proving |
+| Aesop | Search for proofs under a rule policy | Optional bounded candidate and contradiction proving |
+| `LocalContext` / `MetaM` | Inspect the current syntactic declarations and construct expressions | Raw input from which root projection and extraction status are computed |
+| Lean's kernel | Check proof terms | Per-run validation of the combined result |
+
+If the task is to open one existential and continue a proof, direct tactics are simpler. iykyk is
+not justified by witness access alone.
+
+## 3 What's The Claim?
+
+A finite proof-backed account of what a Lean context knows about a value is a useful program object in its own right.
+
+The project tests that thesis by combining eight properties in one interface:
+
+1. **Observation.** Extraction does not consume hypotheses, transform the goal, or require the
+   proof to be reorganized for inspection. Repeating the same extraction in the same state is the
+   same semantic read.
+2. **Rootedness.** The result is centered on a selected term rather than being an undifferentiated
+   dump of the proof state.
+3. **Relational partial knowledge.** Facts may describe relations around the root, not only a
+   partially reconstructed value of its type.
+4. **Shared unknown identity.** One existential witness remains one unknown wherever it occurs.
+5. **Proof-backed content.** Each fact carries evidence, and the whole snapshot has a combined
+   certificate.
+6. **Explicit incompleteness.** Missing facts remain unknown, and bounded search reports
+   truncation separately from truth.
+7. **Extraction-level status.** Truncation and inconsistency are represented as outcomes of
+   observation rather than encoded as spurious propositions about the root.
+8. **Policy separation.** The snapshot contract does not depend on whether a fact was found by
+   direct decomposition, forward rules, `simp`, Aesop, or a future proof-producing engine.
+
+
+Systems that export or control proof
+states, such as LeanDojo and Pantograph, solve a broader machine-interaction problem and primarily
+represent goals, tactics, premises, and proof transitions. iykyk instead performs an in-process
+semantic **projection** of one current context around one selected term.
+
+The distinction must remain falsifiable. If the object is not useful beyond its first integration,
+if raw `LocalContext` traversal is just as simple for each use, or if the representation cannot
+remain stable across proving engines, then the abstraction has not earned its cost.
+
+## More formally 
+
+Let `Γ` be a Lean local context and `t` a well-scoped selected term. A valuation `ρ` satisfies `Γ`
+when it assigns values to the variables in the context in a way that makes all assumptions true.
+Each satisfying valuation gives one possible meaning to `t`.
+
+We read `(Γ, t)` as a family of pointed completions:
 
 \[
   \operatorname{Completions}(\Gamma,t)
   = \{(\rho,\llbracket t\rrbracket_\rho) \mid \rho \models \Gamma\}.
 \]
 
-The valuation remains in this definition because knowledge about `t` can
-involve other values in its surroundings. In the graph example, knowing only
-the set of possible values of `source` would discard the path through the
-shared witness.
+The valuation stays in this definition because knowledge about `t` can involve other values. In
+the graph example, recording only possible values for `source` would discard the path through the
+shared middle vertex.
 
-The extractor computes a finite account `K` of facts common to every permitted
-completion. Its central contract is:
+Extraction computes a finite account `K` with the contract:
 
 \[
   \operatorname{extract}(\Gamma,t)=K
@@ -75,67 +235,26 @@ completion. Its central contract is:
   \Gamma \models \llbracket K\rrbracket_t.
 \]
 
-Here `⟦K⟧ₜ` is the proposition expressed by the extracted knowledge when `t`
-is treated as its root. The contract concerns the meaning of `K`, not its
-eventual presentation. It says that every completion allowed by `Γ` agrees
-with every fact in `K`.
+`⟦K⟧ₜ` is the proposition jointly expressed by the facts in `K`, with shared witnesses bound once.
+For the running example:
 
-This is a soundness claim, not a completeness claim. The extractor may omit a
-fact because it is irrelevant to the root, because the configured search was
-bounded, or because the implementation does not know how to derive it. An
-omitted fact is unknown; it is never interpreted as false.
+\[
+  \llbracket K\rrbracket_{source}
+  = \exists middle,\; edge\;source\;middle \land edge\;middle\;target.
+\]
 
-This contract is enforced at two levels. The formal model in
-`metatheory/IykykMetatheory.lean` models contexts and facts as predicates on
-possible worlds; it proves the extraction calculus sound, proves conjunction
-and shared-witness decomposition lossless, verifies a pure recursive
-decomposition algorithm for nested formulas, and refutes the two tempting
-simpler designs (unshared witnesses, branch choice) with concrete
-counterexamples. Operationally, every extraction reifies `⟦K⟧ₜ` as one
-existentially quantified conjunction and checks its combined proof with
-`Lean.Kernel.check` in the captured context, so the contract above is
-re-established by the kernel on each run rather than assumed of the
-implementation. What stays deliberately trusted is only the reading of a
-kernel-checked `Expr` as a semantic statement; formalizing Lean's kernel in
-Lean is out of scope.
+This is a **soundness** (not a completeness) contract. Extraction may omit a true fact because
+it is disconnected from the root, because a configured limit stopped search, or because no
+implemented rule derives it.
 
-## Why not construct a partial Lean value?
+**What about inconsistent contexts?**
+Classically, an inconsistent `Γ` entails every
+proposition, so returning arbitrary facts would be sound but useless. `ExtractionResult` therefore
+distinguishes ordinary knowledge from a checked contradiction.
 
-For some inductive values, a context may determine enough constructor fields to
-suggest a value containing holes. That is a useful special case, but it is too
-narrow to define the library boundary.
+## 5. The extracted program object
 
-First, knowledge can cross the boundary of the selected value's type. A value
-of type `Vertex` has no field in which to store the proposition that it has an
-edge to another vertex. Second, the context may determine a relation without
-determining either participant. The shared `middle` vertex in the graph example
-must remain one unknown used in two places. Third, the context may rule out
-possibilities without choosing a constructor from which a Lean term can be
-built. Finally, Lean metavariables are obligations to solve inside an
-elaboration process; they are not a durable public representation of partial
-information for arbitrary consumers.
-
-The core result should therefore be knowledge *about* a value, with the value
-marked as its root. A consumer may reconstruct a partial constructor tree when
-the facts justify one, just as Spytial may construct a relational data instance
-when its vocabulary matches the facts. Neither observation is the definition
-of extraction.
-
-## The extracted value
-
-The initial library should expose a `RootedKnowledge` value with three semantic
-ingredients:
-
-1. a distinguished root corresponding to `t`;
-2. named or scoped unknowns whose identities can be shared across facts; and
-3. normalized facts, each carrying evidence accepted by Lean.
-
-A fourth, operational field may report that bounded inference stopped before
-reaching a fixed point. This status is information about extraction, not a fact
-about the selected value.
-
-The precise Lean representation is an implementation question, but the public
-shape should be close to the following:
+The runtime representation is intentionally close to the following:
 
 ```lean
 structure KnownFact where
@@ -145,170 +264,295 @@ structure KnownFact where
 structure Witness where
   id : WitnessId
   type : Expr
+  term : Expr
 
 structure RootedKnowledge where
   root : Expr
+  scope : LocalContext
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
+
+inductive ExtractionResult where
+  | knowledge (value : RootedKnowledge)
+  | inconsistent (value : Inconsistency)
 ```
 
-This sketch leaves an important detail open: a proof mentioning an existential
-witness is valid inside the scope in which that witness was introduced. The
-implementation must represent that scope faithfully, rather than pretending
-that every fact is independently closed. One option is to produce a single
-certificate for an existentially quantified conjunction and expose projections
-through a typed interface. Another is to retain a scoped proof context in the
-knowledge object. The prototype settled this by doing both: the knowledge
-object captures its `LocalContext`, individual facts use stable
-`Classical.choose` terms so witnesses stay shared without new free variables,
-and the finished result is additionally reified into the single
-existentially quantified conjunction — witnesses becoming binders — whose one
-proof the kernel checks per extraction.
+The actual constructors for `RootedKnowledge` and `Inconsistency` are private. Knowledge is created
+through checked smart constructors, projected by deletion, and marked truncated without changing
+its semantic content.
 
-`RootedKnowledge` is intentionally not a Spytial `DataInstance`. It does not
-choose atoms, relation names, labels, JSON fields, or drawing rules. Those are
-observations that a consumer may make of the extracted knowledge.
+The fields have distinct roles:
 
-## Extraction
+- `root` identifies the selected term;
+- `scope` is the captured context in which every stored expression is meaningful;
+- `witnesses` assigns stable identities to symbolic existential choices;
+- `facts` stores propositions paired with proof terms; and
+- `truncated` records an operational fact about search, not a proposition about the root.
 
-Extraction starts with facts already present in the local context and grows a
-small body of knowledge about the root. Every operation must construct proof
-evidence at the moment it adds a fact.
+The current representation is an in-process Lean metaprogramming value, not a portable
+serialization format. Its `Expr`s remain meaningful in the captured `LocalContext`. A future
+serialization layer would need stable names, explicit binders, and a vocabulary for declarations;
+that concern is intentionally outside the initial object.
 
-The first useful operations are:
+## 6. Extraction algorithm
 
-- split conjunctions and expose existential witnesses while preserving their
-  shared identity and scope;
-- resolve a disjunction when one branch is disproved;
-- normalize equalities and local definitions;
-- apply a bounded set of explicitly supplied forward rules;
-- infer constructor shape when a proof excludes the other constructors;
-- retain facts connected to the selected root; and
-- project away facts or witnesses that a consumer did not request.
+The implementation is a small proof-producing forward engine. Given a root and configuration, it
+performs the following stages.
 
-These operations are small enough to certify directly. For example, adding a
-fact requires a proof of that fact; deleting a fact preserves soundness;
-strengthening the context preserves an existing certificate; and applying a
-forward rule uses the proof of the rule together with proofs of its premises.
+### 6.1 Capture the context
 
-Constructor inference is more involved but follows the same rule. If a fact
-about a tree's depth rules out the leaf constructor, the extractor must build a
-Lean proof by cases on the tree, derive a contradiction in the leaf case, and
-return witnesses for the node fields. If it cannot build that proof, the node
-does not appear in the result.
+The root is normalized, the current `LocalContext` is captured, and every non-implementation-detail
+local declaration whose type is a proposition becomes an initial source of knowledge.
 
-The engine is deliberately bounded. A rule such as
+This stage reads the main context but does not replace its declarations or mutate the proof goal.
+The extracted facts live in the returned object; they are not installed as new hypotheses for the
+caller.
+
+If `using *` is selected, suitable implication-shaped raw hypotheses are also collected as forward
+rules. Plain extraction does not globally treat every implication as a rule.
+
+### 6.2 Structural decomposition
+
+Each proved proposition is recursively decomposed using ordinary Lean proof constructors:
+
+- `A ∧ B` produces `A` and `B` using `And.left` and `And.right`;
+- `A ↔ B` produces the two implication directions using `Iff.mp` and `Iff.mpr`;
+- `∃ x, P x` records one `Classical.choose` witness and decomposes
+  `Classical.choose_spec`; and
+- `A ∨ B` is retained without choosing a branch.
+
+Before creating a new choice term for an existential, the extractor checks whether an in-scope
+term of the right type already has the required structural facts. This avoids inventing a second
+identity when the context already names a suitable witness.
+
+Every admitted fact is normalized, deduplicated, checked against its proof, and subject to the fact
+limit.
+
+### 6.3 Forward inference
+
+Rules may come from three explicit sources:
+
+```lean
+iykyk source using [step]  -- exactly the listed rules
+iykyk source using *       -- listed rules plus suitable raw hypotheses
+iykyk source using facts   -- every established rule-shaped fact
+```
+
+Explicit `Iff` rules fire in both directions. `using facts` includes rule-shaped propositions
+uncovered during decomposition, so later results can feed back into inference. This requires
+repeated rounds: one round may expose a rule, a later round may prove its premise, and the new
+conclusion may enable another rule.
+
+`maxRounds` and `maxFacts` keep this process finite. A productive rule such as
 
 ```lean
 seed : Reach start
 step : ∀ x, Reach x → Reach (next x)
 ```
 
-can derive facts forever. The extractor should return a certified finite
-prefix and mark the result as truncated. Proof checking answers whether the
-prefix is true; the status answers whether search stopped early. These are
-separate questions.
+can otherwise generate an unbounded sequence. The returned finite prefix is still sound;
+`truncated = true` reports that search stopped before a fixpoint.
 
-Disjunction also exposes the difference between truth and useful shared
-knowledge. From `P a ∨ Q a`, the extractor may not choose either branch. It may
-retain the disjunction as a fact or compute facts justified in both branches,
-but it must not present `P a` or `Q a` unconditionally. Branch-sensitive
-knowledge is a possible later extension, not a requirement for the first
-prototype.
+### 6.4 Disjunction and inconsistency
 
-## Why a small extraction engine?
+From `A ∨ B` alone, neither branch is public knowledge. If `¬A` is also established, the extractor
+may add `B` using `Or.resolve_left`; symmetrically, `¬B` permits `A`.
 
-Lean's automation remains useful for proving individual obligations, but it
-does not by itself define the extracted object. The library needs predictable
-rules for which facts become public, how existential witnesses are shared, how
-far inference proceeds, and how relevance to the root is determined.
+Resolution runs to a local fixpoint within a saturation round. It can only expose branches of
+already stored disjunctions and is bounded by the fact limit, so a chain of dependent disjunctive
+resolutions does not consume one global inference round per link.
 
-A small forward engine makes those choices explicit. It can ask `simp`,
-`aesop`, or other procedures to discharge a generated proposition, but a fact
-enters `RootedKnowledge` only when the engine obtains a proof term. This keeps
-the contract stable even if the proving strategy changes.
+A direct proof of `False`, a positive fact paired with its negation, or an Aesop-produced
+contradiction yields `ExtractionResult.inconsistent` rather than an arbitrary maximal fact set.
 
-The prototype exposes this as a few ordinary tactic clauses rather than a new
-automation language:
+### 6.5 Candidate proving
+
+Callers may name propositions worth exposing:
 
 ```lean
-iykyk source using [step]
-iykyk source using *
-iykyk source using facts
+iykyk source deriving [Reachable source] with [aesop]
+```
+
+Enabled engines try to prove those candidates. Failure is not an error and does not add a negative
+fact; the proposition remains unknown. Successfully proved candidates are decomposed and may
+participate in a second saturation pass.
+
+### 6.6 Projection to the root
+
+By default, the extractor retains the connected component containing the selected root. The
+prototype builds this component by following term occurrences through proposition arguments and
+then removes unused witnesses.
+
+This is a deliberately simple relevance heuristic, not a complete semantic dependency analysis.
+It makes the first object small and gives future work a concrete policy to improve or replace.
+
+### 6.7 Certification
+
+The remaining facts are conjoined in order. Every witness still appearing in them is abstracted
+into one existential binder, so repeated occurrences of one choice term become structural sharing
+under one binder. For the graph example the certificate is:
+
+```lean
+∃ w, edge source w ∧ edge w target
+```
+
+The combined proof is checked by `Lean.Kernel.check` in the captured local context. Certification
+is enabled by default.
+
+## 7. Relationship to `simp` and Aesop
+
+The proof engines are deliberately hooks rather than the definition of extraction:
+
+```lean
 iykyk source with [simp]
 iykyk source with [simp only [reverse]]
 iykyk source deriving [Reachable source] with [aesop]
 ```
 
-Plain extraction does not invoke automation or treat implication hypotheses as
-rules. `using [step]` applies an explicit rule list. `using *` selects suitable
-raw proof hypotheses as rules, while `using facts` additionally feeds every
-established rule-shaped fact back into later forward rounds. The latter is
-useful when conjunction or equivalence decomposition exposes an implication,
-but it requires a fixed point: one round may expose a rule, another may derive
-its conclusion, and that conclusion may enable a further rule. The existing
-fact and round limits keep this process finite and make early termination
-visible as `truncated`.
+Standard `simp` uses Lean's active simp theorems and default simprocs. `simp only` uses only the
+listed entries, with minimal reflexivity builtins and no default simprocs. Aesop receives a bound on
+rule applications.
 
-Here standard `simp` can normalize established facts, while `simp` and Aesop
-can try to prove caller-named candidates. `simp only [rules]` instead excludes
-the global simp set and default simprocs. Aesop may also search for a
-contradiction. These are explicitly selected, bounded hooks. They can improve
-which true facts the extractor finds, but they do not change the
-representation, relevance policy, or certification boundary. A future
-provenance layer could make the search path easier to inspect, but trust does
-not depend on that trace: every admitted fact already carries a proof and the
-combined result is checked by Lean's kernel.
+The engine boundary is proof-producing. A result crosses it only as a proposition and proof term;
+iykyk independently checks that evidence before adding the fact. Changing the search procedure can
+change which facts are discovered, but it does not change what makes a `RootedKnowledge` valid.
 
-The certificate is therefore an enforcement mechanism, not the main research
-claim. It prevents a bug or heuristic from silently turning a plausible fact
-into reported knowledge. The more important contribution is the extracted
-object and the boundary it creates between proof-context reasoning and its many
-possible uses.
+Plain `iykyk source` invokes neither `simp` nor Aesop. This matters because hidden normalization or
+search would make extraction difficult to predict. Users can opt into familiar automation without
+turning iykyk into a second general-purpose tactic language.
 
-## Consumer boundary
+## 8. Correctness and trust
 
-Consumers receive `RootedKnowledge` and decide how to observe it. A consumer
-may ignore facts, rename entities for presentation, or translate a selected
-vocabulary into its own data model. It must not claim that a derived observation
-contains more information than the certified knowledge supports.
+There are three related but distinct correctness stories.
 
-Spytial is one such consumer:
+### 8.1 Lean already checks proofs
 
-```text
-(proof context Γ, selected term t)
-                 │
-                 ▼
-       Lean Knowledge extraction
-                 │
-                 ▼
-          RootedKnowledge K
-                 │
-                 ▼
-    Spytial relational observation
-                 │
-                 ▼
-             DataInstance
-                 │
-                 ▼
-              diagram
-```
+Every Lean tactic ultimately constructs a term checked by Lean. iykyk does not make proof checking
+novel. Its runtime contribution is to require evidence at the knowledge-object boundary:
 
-The boundary of this project is the production of `K`. Spytial may translate
-`K` into atoms and relations, then apply its existing visualization pipeline.
-Nothing in the extraction contract refers to a rendered diagram or to JSON
-serialization.
+- `addFact` checks that the supplied proof has the claimed proposition;
+- `addWitness` checks that the witness term has the declared type;
+- private constructors prevent callers from bypassing those checks accidentally; and
+- final certification asks the kernel to check the conjunction of the whole result.
 
-Other consumers could support semantic queries, show how knowledge changes
-between proof steps, explain the inputs available to automation, or provide a
-structured interface for external tools. These uses need not agree on one
-relational vocabulary or presentation.
+Thus a buggy search heuristic may omit facts, choose a poor ordering, or truncate too early, but it
+cannot silently admit a false proposition unless it also finds a proof term accepted by the kernel
+or crosses the explicitly trusted boundary.
 
-## Cases that define the boundary
+### 8.2 What the formal metatheory proves
 
-The prototype should include small literate examples whose expected results are
-easy to inspect.
+The separate model in `metatheory/IykykMetatheory.lean` treats contexts as sets of possible worlds
+and proves four families of results:
+
+1. **Derivation soundness.** Hypothesis lookup, conjunction and equivalence elimination,
+   disjunctive syllogism, universal instantiation, and forward application preserve entailment.
+2. **Decomposition soundness.** Every fact returned by the pure recursive formula decomposition is
+   entailed by the input context.
+3. **Decomposition losslessness.** Conjunction, equivalence, and shared-witness existential
+   decomposition jointly reconstruct the information they decompose.
+4. **Certified-knowledge closure.** Empty knowledge is sound; adding a certified fact, projecting,
+   marking truncation, and strengthening the context preserve soundness.
+
+Soundness alone would be satisfied by an extractor that always returned no facts. The losslessness
+theorems rule out that vacuous interpretation for the structural fragment. Concrete
+counterexamples also show why two tempting designs are rejected:
+
+- splitting an existential into facts about unrelated witnesses loses information; and
+- selecting one branch of a disjunction is unsound.
+
+### 8.3 What the metatheory does not prove
+
+The metatheory is not a formal verification of the Lean metaprogram implementation. It models the
+calculus and proves its intended laws; correspondence with the runtime is maintained structurally
+and tested by the checked construction API and per-run kernel certificate.
+
+Nor can iykyk internally prove a general reflection principle saying that every kernel-accepted
+Lean proposition is semantically true without formalizing an appropriate model of Lean's type
+theory and accepting the associated consistency assumptions. The deliberately trusted remainder
+is the standard one: Lean's kernel plus the interpretation of checked expressions as semantic
+statements.
+
+The metatheory therefore serves two purposes that kernel checking alone does not:
+
+- it states precisely what the extracted object is intended to mean; and
+- it demonstrates that witness sharing, omission-as-unknown, and non-selection of disjunctions are
+  semantic requirements rather than presentation preferences.
+
+Kernel certification remains the operational trust mechanism for each actual result.
+
+## 9. Why the abstraction matters
+
+The central practical problem is not that Lean hides its witnesses. It does not. The problem is
+that the result of ordinary proof manipulation remains encoded as local proof-state structure and
+as the sequence of tactics that produced it.
+
+Making a semantic account explicit has several consequences.
+
+### 9.1 Observation is not a state transition
+
+Tactics such as `rcases` are designed to advance a proof. They consume or replace declarations and
+leave later tactics in a different state. That is appropriate for proving; it is the wrong contract
+for inspection.
+
+`Iykyk.extract` is designed as a read. It leaves the caller's goal and hypotheses alone, so the
+same observation can be requested repeatedly and observations can be placed at different proof
+points without changing the proof merely to make it inspectable. This is essential for comparing
+what was known before and after a sequence of tactics.
+
+### 9.2 A semantic projection is more than a hypothesis listing
+
+Reading the local declarations after some chosen decompositions reports a syntactic proof state.
+iykyk instead recursively derives safe structural facts and projects their argument-connectivity
+graph to the component rooted at the selected term.
+
+The returned object can also state that this computation was truncated or that the source context
+was inconsistent and ordinary facts are intentionally being withheld. Neither condition is a
+proposition the original context needs to contain. They are metadata about how the semantic view
+was obtained and how it should be interpreted.
+
+### 9.3 Partial values become usable before computation is possible
+
+The selected term need not reduce to a constructor or concrete datum. Relations, exclusions, and
+shared existential identities may already be known. Treating that knowledge as data avoids waiting
+for a value that the context may never determine.
+
+### 9.4 Extraction policy becomes testable
+
+Questions that are implicit in an ad hoc context traversal become explicit library behavior:
+
+- Does conjunction split?
+- Do the directions of an equivalence become rules?
+- Are implication hypotheses active by default?
+- Is the global simp set allowed?
+- What happens when search is bounded?
+- Which facts are relevant to the root?
+
+These choices can be documented, regression-tested, and changed deliberately.
+
+### 9.5 Proof search is separated from knowledge validity
+
+Different engines may discover different subsets of the truth. By accepting only proof-backed
+facts, the knowledge contract remains stable across those discovery policies. This permits a small,
+predictable default while allowing explicit stronger search.
+
+### 9.6 One context can support more than one observation
+
+The extracted value does not choose diagram nodes, relational atoms, source labels, JSON fields, or
+display syntax. Those are interpretations of the knowledge, not part of its truth conditions.
+
+Spytial is the first concrete integration: it calls `Iykyk.extract`, translates selected facts and
+witnesses into a relational instance, and then applies its own visualization pipeline. That
+integration demonstrates that the API is usable, but one consumer is not enough to establish that
+the abstraction is broadly reusable. A second materially different use would be stronger evidence.
+
+Potential uses include semantic queries over the current context, comparison of knowledge across
+proof steps, structured explanations of inputs available to automation, and machine-facing
+interfaces that need more meaning than a pretty-printed goal state.
+
+## 10. Boundary cases
+
+Small examples define the intended semantics more clearly than broad slogans.
 
 ### Shared existential witness
 
@@ -316,19 +560,30 @@ easy to inspect.
 route : ∃ middle, edge source middle ∧ edge middle target
 ```
 
-The result contains two edges joined by one unknown vertex. This is the central
-example because it demonstrates information that cannot be represented by
-merely returning a partially filled value of type `Vertex`.
+The result contains two edges joined by one unknown vertex. It must not contain two unrelated
+witnesses.
+
+### Existing named witness
+
+```lean
+middle : Vertex
+left  : edge source middle
+right : edge middle target
+route : ∃ w, edge source w ∧ edge w target
+```
+
+If the structural facts already establish that the named `middle` is a witness, extraction should
+reuse the in-scope identity rather than introduce a second choice term.
 
 ### Derived knowledge
 
 ```lean
-route : ∃ middle, edge source middle ∧ edge middle target
-step  : ∀ x y, edge x y → Reach x y
+edgeFact : edge source target
+step : ∀ x y, edge x y → Reach x y
 ```
 
-If forward application is enabled for `step`, any reported `Reach` fact must
-carry the proof obtained by applying `step` to an edge proof.
+With `step` enabled, any reported `Reach source target` fact must carry the proof obtained by
+applying the rule to `edgeFact`.
 
 ### Productive rule
 
@@ -337,9 +592,8 @@ seed : Reach start
 step : ∀ x, Reach x → Reach (next x)
 ```
 
-The result is a finite certified prefix with `truncated = true`. The term
-`next x` may need a fresh display identity such as `•₁` in a consumer, but that
-presentation choice does not belong in the core object.
+Extraction returns a finite certified prefix. If the configured bounds stop before a fixpoint,
+`truncated` is true.
 
 ### Disjunction
 
@@ -347,118 +601,200 @@ presentation choice does not belong in the core object.
 choice : edge source left ∨ edge source right
 ```
 
-Neither edge is an unconditional fact. The extractor preserves the disjunction
-or returns only consequences common to both cases.
+Neither edge is unconditional knowledge. A proved negation of one branch may resolve the other;
+otherwise the disjunction remains whole.
 
 ### Inconsistent context
 
-If `Γ` is inconsistent, classical entailment makes every proposition true. A
-tool that displayed arbitrary facts in this case would be technically sound and
-practically useless. The first implementation should detect a proved
-contradiction and return a distinct inconsistent result rather than fabricate a
-maximal `RootedKnowledge` value.
+```lean
+h : P
+notH : ¬P
+```
 
-## What this project does not claim
+The result is an explicit inconsistency with a proof of `False`, not a collection of arbitrary
+consequences.
 
-This project does not visualize proof states, reconstruct a complete value,
-enumerate all models of a context, or compete with general theorem proving. It
-does not promise completeness. It does not require every consumer to use
-relational data. It also does not claim that certification is novel on its own;
-Lean already checks proof terms. The design contribution is to make partial
-knowledge about a selected value an explicit, reusable program object.
+## 11. Current scope and limitations
 
-## Research framing
+The prototype currently supports:
 
-### Context
+- conjunction and shared-existential decomposition;
+- equivalence directions;
+- preservation and checked resolution of disjunctions;
+- direct contradiction detection;
+- explicit, local, and established forward-rule policies;
+- opt-in standard `simp`, restricted `simp only`, and bounded Aesop;
+- root-component projection;
+- bounded saturation with explicit truncation;
+- checked smart constructors and per-run kernel certification; and
+- a programmatic `Iykyk.extract` API with small consumer-neutral queries.
 
-Programming environments increasingly work with artifacts before they are
-fully determined. Typed holes, proof goals, partial programs, generated code,
-and symbolic execution all leave useful semantic information in the surrounding
-environment. Most tools either wait for a concrete value or expose the state of
-the reasoning process itself.
+Important limitations remain:
 
-### Inquiry
+- relevance is based on syntactic term connectivity rather than a formal semantic slice;
+- equality normalization is limited;
+- constructor-shape inference is not implemented;
+- branch-sensitive conditional knowledge is not represented;
+- witness scope is encoded with classical choice terms rather than an explicit telescope;
+- provenance explains neither the source hypothesis nor inference path of each fact;
+- the result is not stable serialized data outside its captured context;
+- extraction is incomplete even when `truncated = false`—that status means the configured engine
+  reached its own fixpoint, not that every logical consequence was found; and
+- kernel certification currently requires a fully elaborated, metavariable-free scope and may need
+  to be disabled for unsupported universe-polymorphic situations.
 
-How can a programming environment expose a value when the value is constrained
-but incomplete? In Lean, the immediate question is how to turn a context `Γ`
-and selected term `t` into finite ordinary data that records what every
-completion of the context agrees upon.
+These limitations are compatible with the soundness contract. They determine usefulness and
+predictability, not whether an admitted fact is true.
 
-### Approach
+## 12. Related work
 
-We treat `(Γ, t)` as a family of pointed completions and extract a rooted body
-of facts shared by those completions. Existential witnesses preserve identity
-across facts, inference is explicitly bounded, and each reported fact is
-accepted only with a Lean proof. Presentation is delegated to consumers.
+### 12.1 Lean tactics and metaprogramming
 
-### Knowledge
+Lean's quantifier rules, `cases`/`rcases`, and term-level choice already provide witness access.
+Mathlib's `choose` tactic provides Skolemization. These mechanisms act on a selected hypothesis or
+construct selected terms; iykyk composes the same operations across a context and records the
+result.
 
-The central object is a partial value understood through program knowledge. It
-is neither a missing concrete value nor a proof state. It is a finite,
-inspectable account of guaranteed structure and relations, including shared
-unknowns, with absence interpreted as lack of knowledge rather than falsity.
+Lean's simplifier and Aesop are proof-producing automation. Aesop emphasizes configurable,
+white-box best-first search. iykyk treats these systems as optional proof suppliers rather than as
+the definition of the extracted object.
 
-### Grounding
+ProofWidgets provides infrastructure for symbolic visualizations, tactic interfaces, and
+domain-specific goal displays. It addresses presentation and interaction; iykyk addresses the
+semantic value that a presentation may inspect.
 
-A Lean prototype can ground the idea at two levels. Its formal contract states
-that the meaning of extracted knowledge follows from the current context. Its
-literate examples exercise existential sharing, proof-producing inference,
-constructor reasoning, disjunction, inconsistency, and bounded productive
-rules. Lean's kernel checks the evidence attached to every reported fact.
+LeanDojo and Pantograph expose Lean proof states and interactions to external programs, especially
+for automated and learned theorem proving. They make goals, tactics, premises, and proof
+transitions machine-accessible. iykyk is narrower and in-process: it projects a current local
+context into proved relational knowledge around one term. These approaches are complementary; an
+external proof interface could transport or request an iykyk-style snapshot.
 
-### Importance
+### 12.2 Incomplete information and possible worlds
 
-Once partial knowledge is ordinary data, it can support more than one interface.
-Spytial can visualize it, query tools can search it, proof environments can
-compare it across steps, and external tools can consume it without interpreting
-Lean's whole tactic state. The abstraction lets these systems share one account
-of what is known while choosing different presentations and interactions.
+Incomplete relational databases distinguish unknown values from absent or false facts and preserve
+the identity of labeled unknowns across tuples. Imieliński and Lipski's possible-world treatment of
+incomplete information is the closest model for the interpretation of shared witnesses and
+omission-as-unknown.
 
-## Intellectual lineage
+iykyk differs by taking a Lean proof context as the specification of possible worlds and attaching
+Lean evidence to every reported fact.
 
-The design sits between several established ideas:
+### 12.3 Constraint programming and the database chase
 
-- incomplete relational databases describe possible completions while
-  preserving the identity of unknown values;
-- logic and functional-logic programming use variables and unification as data
-  is progressively constrained;
-- the database chase makes rule-driven witness introduction explicit;
-- abstract interpretation and shape analysis compute sound, incomplete views
-  of program states; and
-- typed-hole and live-programming systems expose useful meaning before a
-  program is complete.
+Constraint programming treats partially determined values as useful objects constrained by
+accumulated relations. The database chase repeatedly applies dependencies, introduces witnesses,
+and may fail to terminate without restrictions.
 
-The proposed object differs in emphasis. It is rooted at a selected Lean term,
-uses a proof context as its source of knowledge, carries kernel-checkable
-evidence, and is designed as a reusable library boundary rather than a single
-visual interface.
+These traditions motivate iykyk's forward saturation, shared witness identity, explicit rule
+selection, and separate truncation status. iykyk is not a general constraint solver or chase
+implementation; its first engine handles a small proof-producing fragment.
 
-Useful starting references include Imieliński and Lipski on
-[incomplete information in relational databases](https://www.inf.unibz.it/~nutt/Teaching/FDBs1718/FDBsPapers/imielinskiLipski-JACM-84.pdf),
-Saraswat and Rinard on
-[concurrent constraint programming](https://doi.org/10.1145/96709.96733),
-Fagin et al. on
-[data exchange and the chase](https://doi.org/10.1016/j.tcs.2004.10.002),
-Sagiv, Reps, and Wilhelm on
-[parametric shape analysis](https://doi.org/10.1145/514188.514190), and
-Omar et al. on
-[live functional programming with typed holes](https://doi.org/10.1145/3290327).
+### 12.4 Abstract interpretation and shape analysis
 
-## Questions for the prototype
+Abstract interpretation and shape analysis compute finite sound accounts of possibly unbounded
+program states. They motivate the separation between soundness and completeness: a finite view may
+be useful even when it omits true facts, provided its approximation direction is clear.
 
-The first implementation should answer a small number of design questions:
+Unlike a fixed abstract domain, iykyk's initial fact language is Lean `Expr`, and each included fact
+has a proof. A future typed intermediate language could make the abstract domain and its operations
+more explicit.
 
-1. Should normalized facts remain Lean expressions, or should the library use a
-   typed intermediate language with an interpretation back into Lean?
-2. How should existential scopes be represented so that consumers can inspect
-   shared witnesses without handling unsafe free variables?
-3. Which facts count as connected to the root, and should relevance be part of
-   extraction or an independent projection operation?
-4. Which inference rules belong in the core, and which should be supplied by a
-   caller?
-5. What is the smallest consumer interface that can translate knowledge without
-   coupling the core library to Spytial's relational model?
+### 12.5 Typed holes and live programming
 
-The prototype succeeds if the graph examples produce small inspectable values,
-every included fact is checked by Lean, and a second consumer can use the same
-result without depending on Spytial.
+Typed-hole and live-programming systems expose useful semantic feedback before a program is
+complete. iykyk applies the same interaction principle to proof contexts: a selected value can have
+inspectable meaning before it is concrete or the surrounding theorem is finished.
+
+### 12.6 LCF-style kernels and proof-producing automation
+
+LCF-style systems isolate trust in a small kernel and allow complex tactics to search outside that
+trusted core. iykyk follows this pattern: extraction and automation may be heuristic, but facts
+cross the boundary with proof terms and the combined result is rechecked.
+
+This trust architecture is established practice, not a novelty claim. Its importance here is that
+semantic extraction can be extended without making every search heuristic part of the trusted
+base.
+
+### 12.7 References
+
+- Lean, [Quantifiers](https://lean-lang.org/doc/reference/latest/Basic-Propositions/Quantifiers/)
+  and [Tactic proofs](https://lean-lang.org/doc/reference/latest/Tactic-Proofs/).
+- Mathlib, [`choose` tactic](https://leanprover-community.github.io/mathlib4_docs/Mathlib/Tactic/Choose.html).
+- Jannis Limperg and Asta Halkjær From,
+  [*Aesop: White-Box Best-First Proof Search for Lean*](https://doi.org/10.1145/3573105.3575671).
+- Wojciech Nawrocki and E. W. Ayers,
+  [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4).
+- Kaiyu Yang et al.,
+  [*LeanDojo: Theorem Proving with Retrieval-Augmented Language Models*](https://arxiv.org/abs/2306.15626).
+- Leni Aniva et al.,
+  [*Pantograph: A Machine-to-Machine Interaction Interface for Advanced Theorem Proving, High
+  Level Reasoning, and Data Extraction in Lean 4*](https://doi.org/10.1007/978-3-031-90643-5_6).
+- Tomasz Imieliński and Witold Lipski,
+  [*Incomplete Information in Relational Databases*](https://www.inf.unibz.it/~nutt/Teaching/FDBs1718/FDBsPapers/imielinskiLipski-JACM-84.pdf).
+- Vijay Saraswat and Martin Rinard,
+  [*Concurrent Constraint Programming*](https://doi.org/10.1145/96709.96733).
+- Ronald Fagin et al.,
+  [*Data Exchange: Semantics and Query Answering*](https://doi.org/10.1016/j.tcs.2004.10.002).
+- Mooly Sagiv, Thomas Reps, and Reinhard Wilhelm,
+  [*Parametric Shape Analysis via 3-Valued Logic*](https://doi.org/10.1145/514188.514190).
+- Cyrus Omar et al.,
+  [*Live Functional Programming with Typed Holes*](https://doi.org/10.1145/3290327).
+
+## 13. Evaluation and next questions
+
+The prototype should be judged on more than compilation. Evidence for the abstraction would
+include:
+
+1. **Semantic examples.** Shared witnesses, disjunctions, inconsistency, equivalences, and bounded
+   productive rules behave as specified.
+2. **Trust tests.** Forged facts and mismatched witnesses are rejected, while every normal result
+   produces a kernel-accepted combined certificate.
+3. **Predictability.** Defaults remain small; every broader inference source and proof engine is
+   explicit; truncation is visible.
+4. **Reuse.** At least two materially different integrations consume `RootedKnowledge` without
+   importing each other's vocabulary.
+5. **Stability.** Improving or replacing proof search does not require changing the validity
+   contract of the extracted value.
+6. **Explanatory value.** The object is meaningfully easier to query or translate than raw local
+   declarations for its intended tasks.
+
+The next design questions are:
+
+- Should witnesses move from choice terms to an explicit scoped telescope?
+- Should facts remain general `Expr`s or use a typed intermediate language with an interpretation
+  back into Lean?
+- Can relevance be specified and proved as a semantic slicing operation rather than a syntactic
+  connectivity heuristic?
+- Which equality and constructor inferences add substantial value without making extraction
+  unpredictable?
+- What provenance is sufficient to explain an extraction without becoming part of the trust
+  boundary?
+- Which second integration best tests whether the interface is genuinely consumer-neutral?
+
+## 14. Non-claims
+
+iykyk does not claim to:
+
+- reveal witnesses unavailable to `rcases`, `choose`, or the Lean metaprogramming API;
+- replace `simp`, Aesop, or general theorem proving;
+- reconstruct every selected term as a concrete or partial value;
+- enumerate all models or all logical consequences of a context;
+- prove its own runtime implementation correct inside Lean;
+- make kernel certification novel;
+- provide a general proof-state UI or external interaction protocol; or
+- guarantee logical completeness when its configured search reaches a fixpoint.
+
+The project succeeds if it provides a small, trustworthy, useful answer to one question:
+
+> Given this Lean context and this selected term, what finite body of proved knowledge should an
+> ordinary program be able to inspect right now?
+
+## Conclusion
+
+Lean already knows how to eliminate existentials, split conjunctions, normalize propositions,
+search for proofs, and check the resulting terms. iykyk does not compete with those capabilities.
+It gives their relevant results a particular shape: a finite semantic snapshot rooted at a term,
+with shared unknowns, proof-backed facts, explicit bounds, and a combined certificate.
+
+That shape is the hypothesis. The implementation and metatheory make it concrete enough to test;
+the examples and integrations must determine whether it is worth keeping.
