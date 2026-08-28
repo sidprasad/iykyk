@@ -145,6 +145,12 @@ private def collectContext (config : Config) (initial : BuildState) : MetaM Buil
 private partial def applyRuleCore (ruleProof ruleType : Expr)
     (facts : Array KnownFact) : MetaM (Array Candidate) := do
   let ruleType ← whnf ruleType
+  if ruleType.isAppOfArity ``Iff 2 then
+    let forward ← mkAppM ``Iff.mp #[ruleProof]
+    let forwardCandidates ← applyRuleCore forward (← inferType forward) facts
+    let backward ← mkAppM ``Iff.mpr #[ruleProof]
+    let backwardCandidates ← applyRuleCore backward (← inferType backward) facts
+    return forwardCandidates ++ backwardCandidates
   match ruleType with
   | .forallE _ domain body _ =>
       if ← isProp domain then
