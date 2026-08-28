@@ -157,8 +157,14 @@ inductive ExtractionResult where
 /-- Bounds and relevance policy for extraction. -/
 structure Config where
   rules : Array Expr := #[]
+  /-- Add suitable proof hypotheses from the local context to `rules`. -/
+  useLocalRules : Bool := false
+  /-- Let rule-shaped established facts participate in later saturation rounds. -/
+  useEstablishedRules : Bool := false
   candidates : Array Expr := #[]
   engines : Array ProofEngine := #[]
+  /-- When set, `simp` uses only these entries, without the global set or default simprocs. -/
+  simpOnlyRules : Option (Array Expr) := none
   maxAesopRuleApplications : Nat := 200
   maxRounds : Nat := 4
   maxFacts : Nat := 128

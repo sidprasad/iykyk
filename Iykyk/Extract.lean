@@ -8,9 +8,10 @@ public section
 /-!
 # Certified extraction engine
 
-This deliberately small engine decomposes conjunctions and existentials, applies explicit
-Horn-style rules, asks opt-in engines about named candidates, detects contradictions, and optionally
-keeps only facts connected to the selected root.
+This deliberately small engine decomposes conjunctions and existentials, applies explicitly
+selected Horn-style rules, asks opt-in engines about named candidates, detects contradictions, and
+optionally keeps only facts connected to the selected root. Rules may come from a caller list, raw
+local hypotheses, or established facts; these sources remain opt-in.
 
 The engine never constructs a `RootedKnowledge` directly: it grows one through the checked smart
 constructors in `Iykyk/Knowledge.lean`, so every inserted fact is checked against its proof at the
@@ -87,7 +88,7 @@ private def existentialAlreadyKnown (type predicate : Expr) (facts : Array Known
 private partial def decompose (config : Config) (proof proposition : Expr)
     (state : BuildState) : MetaM BuildState := do
   let fact ← if config.uses .simp then
-    simplifyProvedFact proposition proof
+    simplifyProvedFact proposition proof config
   else
     pure { proposition, proof }
   let proposition ← normalize fact.proposition
@@ -111,6 +112,27 @@ private partial def decompose (config : Config) (proof proposition : Expr)
     decompose config specProof (← inferType specProof) state
   else
     pushFact state config proposition proof
+
+private partial def isForwardRuleType (type : Expr) : MetaM Bool := do
+  match ← whnf type with
+  | .forallE _ domain body _ =>
+      if ← isProp domain then
+        return true
+      let argument ← mkFreshExprMVar (some domain)
+      isForwardRuleType (body.instantiate1 argument)
+  | _ => return false
+
+private def collectLocalRules : MetaM (Array Expr) := do
+  let mut rules := #[]
+  for localDecl in ← getLCtx do
+    unless localDecl.isImplementationDetail do
+      if ← isProp localDecl.type then
+        let saved ← saveState
+        let suitable ← isForwardRuleType localDecl.type
+        saved.restore
+        if suitable then
+          rules := rules.push (.fvar localDecl.fvarId)
+  return rules
 
 private def collectContext (config : Config) (initial : BuildState) : MetaM BuildState := do
   let mut state := initial
@@ -149,6 +171,16 @@ private partial def applyRuleCore (ruleProof ruleType : Expr)
 
 private def applyRule (rule : Expr) (facts : Array KnownFact) : MetaM (Array Candidate) := do
   applyRuleCore rule (← inferType rule) facts
+
+private def establishedForwardRules (facts : Array KnownFact) : MetaM (Array Expr) := do
+  let mut rules := #[]
+  for fact in facts do
+    let saved ← saveState
+    let suitable ← isForwardRuleType fact.proposition
+    saved.restore
+    if suitable then
+      rules := rules.push fact.proof
+  return rules
 
 private def negatedDomain? (proposition : Expr) : MetaM (Option Expr) := do
   match ← whnf proposition with
@@ -189,7 +221,12 @@ private def resolveDisjunctionsOnce (config : Config) (state : BuildState) :
 private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (BuildState × Bool) := do
   let mut next := state
   let mut added := false
-  for rule in config.rules do
+  let mut rules := config.rules
+  if config.useEstablishedRules then
+    for rule in ← establishedForwardRules state.knowledge.facts do
+      if !rules.contains rule then
+        rules := rules.push rule
+  for rule in rules do
     for candidate in ← applyRule rule state.knowledge.facts do
       if !factExists next.knowledge.facts candidate.proposition then
         let before := next.knowledge.facts.size
@@ -278,6 +315,8 @@ def projectToRoot (knowledge : RootedKnowledge) : MetaM RootedKnowledge := do
 /-- Extract finite, proof-backed knowledge about `root` without mutating the proof goal. -/
 def extract (root : Expr) (config : Config := {}) : MetaM ExtractionResult := do
   let root ← normalize root
+  let localRules ← if config.useLocalRules then collectLocalRules else pure #[]
+  let config := { config with rules := config.rules ++ localRules }
   let scope ← instantiateLCtxMVars (← getLCtx)
   let initial ← collectContext config { knowledge := .empty root scope }
   let (state, truncatedBeforeCandidates) ← saturate config initial
