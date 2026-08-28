@@ -51,6 +51,39 @@ private def pushFact (state : BuildState) (config : Config) (proposition proof :
     return { state with hitFactLimit := true }
   return { state with knowledge := ← state.knowledge.addFact proposition proof }
 
+private def matchesKnownFact (facts : Array KnownFact) (proposition : Expr) : MetaM Bool := do
+  for fact in facts do
+    let saved ← saveState
+    let matched ← try isDefEq fact.proposition proposition catch _ => pure false
+    saved.restore
+    if matched then
+      return true
+  return false
+
+private partial def structurallyKnown (facts : Array KnownFact) (proposition : Expr) :
+    MetaM Bool := do
+  let proposition ← normalize proposition
+  if proposition.isAppOfArity ``And 2 then
+    let args := proposition.getAppArgs
+    if !(← structurallyKnown facts args[0]!) then
+      return false
+    structurallyKnown facts args[1]!
+  else
+    matchesKnownFact facts proposition
+
+/-- Whether an in-scope term already witnesses an existential's structurally decomposed body. -/
+private def existentialAlreadyKnown (type predicate : Expr) (facts : Array KnownFact) :
+    MetaM Bool := do
+  for localDecl in ← getLCtx do
+    unless localDecl.isImplementationDetail do
+      let candidate := Expr.fvar localDecl.fvarId
+      let saved ← saveState
+      let hasType ← try isDefEq (← inferType candidate) type catch _ => pure false
+      saved.restore
+      if hasType && (← structurallyKnown facts (mkApp predicate candidate)) then
+        return true
+  return false
+
 private partial def decompose (config : Config) (proof proposition : Expr)
     (state : BuildState) : MetaM BuildState := do
   let fact ← if config.uses .simp then
@@ -65,6 +98,8 @@ private partial def decompose (config : Config) (proof proposition : Expr)
     decompose config (← mkAppM ``And.right #[proof]) args[1]! state
   else if proposition.isAppOfArity ``Exists 2 then
     let args := proposition.getAppArgs
+    if ← existentialAlreadyKnown args[0]! args[1]! state.knowledge.facts then
+      return state
     let witnessTerm ← mkAppM ``Classical.choose #[proof]
     let state := { state with knowledge := ← state.knowledge.addWitness args[0]! witnessTerm }
     let specProof ← mkAppM ``Classical.choose_spec #[proof]
