@@ -10,8 +10,8 @@ than merely restating that supplied certificates are valid.
 **Soundness of the calculus.** `Derivation hyps fact` is a syntactic calculus over hypothesis facts.
 Its only base rule is membership in `hyps`; there is no constructor accepting a bare semantic
 entailment. `Derivation.sound` checks hypothesis lookup, conjunction and equivalence elimination,
-universal instantiation, and forward application. An unsound inference rule would make this
-theorem unprovable.
+disjunctive syllogism, universal instantiation, and forward application. An unsound inference rule
+would make this theorem unprovable.
 
 **Sound and lossless decomposition.** `entails_and_iff`, `entails_equivalence_iff`, and
 `exists_shared_witness_iff` cover one conjunction, equivalence, or existential. `Formula.decompose`
@@ -36,6 +36,7 @@ soundness. Inconsistency remains a separate result because it entails every fact
 | hypothesis collection (`collectContext`) | `Derivation.hyp` |
 | `And.left` / `And.right` splitting | `Derivation.andLeft` / `andRight`, `entails_and_iff` |
 | `Iff.mp` / `Iff.mpr` directions | `Derivation.iffForward` / `iffBackward`, `entails_equivalence_iff` |
+| `Or.resolve_left` / `resolve_right` | `Derivation.resolveLeft` / `resolveRight` |
 | recursive conjunction/existential splitting | `Formula.decompose`, `decompose_sound`, `decompose_lossless` |
 | rule instantiation and application (`applyRule`) | `Derivation.instantiate`, `Derivation.forward` |
 | existential decomposition via `Classical.choose` | `exists_shared_witness_iff` |

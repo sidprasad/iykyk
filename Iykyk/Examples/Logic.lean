@@ -32,4 +32,26 @@ example (source : Vertex) (A B : Vertex → Prop) (equivalence : A source ↔ B 
   iykyk source
   trivial
 
+/--
+info: iykyk
+  root: source
+  witnesses: (none)
+  facts:
+    [0] A source ∨ B source
+    [1] A source → False
+    [2] B source
+  certificate: (A source ∨ B source) ∧ (A source → False) ∧ B source
+  status: complete
+-/
+#guard_msgs in
+example (source : Vertex) (A B : Vertex → Prop)
+    (choice : A source ∨ B source) (notA : ¬ A source) : True := by
+  iykyk source
+  trivial
+
+example (source : Vertex) (A B : Vertex → Prop)
+    (choice : A source ∨ B source) (notB : ¬ B source) : True := by
+  iykyk source
+  trivial
+
 end Iykyk.Examples.Logic

@@ -76,10 +76,10 @@ The formal model lives separately in [`metatheory/`](./metatheory). It defines c
 possible worlds and proves three kinds of results, each falsifiable:
 
 - **Soundness.** `Derivation` is a syntactic calculus over hypothesis facts — membership,
-  conjunction and equivalence elimination, universal instantiation, forward application — with no
-  rule that accepts an unchecked semantic certificate. `Derivation.sound` proves every rule
-  preserves entailment; `extract_sound` extends this to knowledge values whose remaining facts
-  carry certificates.
+  conjunction and equivalence elimination, disjunctive syllogism, universal instantiation, forward
+  application — with no rule that accepts an unchecked semantic certificate. `Derivation.sound`
+  proves every rule preserves entailment; `extract_sound` extends this to knowledge values whose
+  remaining facts carry certificates.
 - **Losslessness.** `entails_and_iff`, `entails_equivalence_iff`, and
   `exists_shared_witness_iff` prove that conjunction splitting, equivalence directions, and
   shared-witness existential decomposition preserve exactly the information of the hypothesis they
@@ -108,7 +108,7 @@ principle for it is impossible internally).
 - explicitly supplied Horn-style forward rules with `iykyk root using [rule₁, rule₂]`;
 - opt-in `simp` normalization and bounded Aesop candidate proving;
 - bounded inference with a distinct `truncated` status;
-- preservation of disjunctions without choosing a branch;
+- preservation of disjunctions without choosing a branch, plus checked disjunctive syllogism;
 - direct inconsistency detection, with broader proof search when Aesop is selected;
 - projection to the connected component containing the selected root;
 - an unforgeable `RootedKnowledge`: private constructors, so facts and witnesses enter only through
