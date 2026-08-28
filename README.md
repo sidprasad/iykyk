@@ -101,6 +101,7 @@ principle for it is impossible internally).
 ## What works
 
 - conjunction splitting and shared existential witnesses;
+- reuse of an in-scope existential witness when its structural facts are already known;
 - explicitly supplied Horn-style forward rules with `iykyk root using [rule₁, rule₂]`;
 - opt-in `simp` normalization and bounded Aesop candidate proving;
 - bounded inference with a distinct `truncated` status;

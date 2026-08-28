@@ -40,8 +40,17 @@ example (source target : Vertex)
   iykyk source
   trivial
 
--- A certificate extracted after a local proof has a fully instantiated scope,
--- so the combined certificate is accepted by the kernel.
+/--
+info: iykyk
+  root: source
+  witnesses: (none)
+  facts:
+    [0] edge source middle
+    [1] edge middle target
+  certificate: edge source middle ∧ edge middle target
+  status: complete
+-/
+#guard_msgs in
 example (source target middle : Vertex)
     (left : edge source middle) (right : edge middle target) : True := by
   have route : ∃ middle, edge source middle ∧ edge middle target :=
