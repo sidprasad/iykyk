@@ -86,6 +86,16 @@ inductive Derivation {World : Type u} (hyps : List (Fact World)) : Fact World �
   | iffBackward {left right : Fact World}
       (proof : Derivation hyps (fun world => left world ↔ right world)) :
       Derivation hyps (fun world => right world → left world)
+  /-- Resolve the left branch of a disjunction using a derived negation. -/
+  | resolveLeft {left right : Fact World}
+      (choice : Derivation hyps (fun world => left world ∨ right world))
+      (negative : Derivation hyps (fun world => left world → False)) :
+      Derivation hyps right
+  /-- Resolve the right branch of a disjunction using a derived negation. -/
+  | resolveRight {left right : Fact World}
+      (choice : Derivation hyps (fun world => left world ∨ right world))
+      (negative : Derivation hyps (fun world => right world → False)) :
+      Derivation hyps left
   /-- Instantiation of a universally quantified rule at a chosen value. -/
   | instantiate {α : Sort v} {predicate : World → α → Prop} (value : α)
       (proof : Derivation hyps (fun world => ∀ x, predicate world x)) :
@@ -108,6 +118,10 @@ theorem Derivation.sound {hyps : List (Fact World)} {fact : Fact World} :
   | .andRight proof => fun world compatible => (proof.sound world compatible).2
   | .iffForward proof => fun world compatible => (proof.sound world compatible).mp
   | .iffBackward proof => fun world compatible => (proof.sound world compatible).mpr
+  | .resolveLeft choice negative => fun world compatible =>
+      (choice.sound world compatible).resolve_left (negative.sound world compatible)
+  | .resolveRight choice negative => fun world compatible =>
+      (choice.sound world compatible).resolve_right (negative.sound world compatible)
   | .instantiate value proof => fun world compatible => proof.sound world compatible value
   | .forward premiseProof ruleProof => fun world compatible =>
       ruleProof.sound world compatible (premiseProof.sound world compatible)

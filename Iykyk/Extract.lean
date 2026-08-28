@@ -150,6 +150,42 @@ private partial def applyRuleCore (ruleProof ruleType : Expr)
 private def applyRule (rule : Expr) (facts : Array KnownFact) : MetaM (Array Candidate) := do
   applyRuleCore rule (← inferType rule) facts
 
+private def negatedDomain? (proposition : Expr) : MetaM (Option Expr) := do
+  match ← whnf proposition with
+  | .forallE _ domain body _ =>
+      if !body.hasLooseBVar 0 && (← normalize body).isConstOf ``False then
+        return some domain
+      return none
+  | _ => return none
+
+private def isDefEqPreservingState (left right : Expr) : MetaM Bool := do
+  let saved ← saveState
+  let result ← try isDefEq left right catch _ => pure false
+  saved.restore
+  return result
+
+private def resolveDisjunctionsOnce (config : Config) (state : BuildState) :
+    MetaM (BuildState × Bool) := do
+  let mut next := state
+  let mut added := false
+  for disjunction in state.knowledge.facts do
+    let proposition ← normalize disjunction.proposition
+    if proposition.isAppOfArity ``Or 2 then
+      let disjuncts := proposition.getAppArgs
+      for negative in state.knowledge.facts do
+        if let some domain ← negatedDomain? negative.proposition then
+          if ← isDefEqPreservingState domain disjuncts[0]! then
+            let proof ← mkAppM ``Or.resolve_left #[disjunction.proof, negative.proof]
+            let before := next.knowledge.facts.size
+            next ← decompose config proof disjuncts[1]! next
+            added := added || next.knowledge.facts.size > before
+          if ← isDefEqPreservingState domain disjuncts[1]! then
+            let proof ← mkAppM ``Or.resolve_right #[disjunction.proof, negative.proof]
+            let before := next.knowledge.facts.size
+            next ← decompose config proof disjuncts[0]! next
+            added := added || next.knowledge.facts.size > before
+  return (next, added)
+
 private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (BuildState × Bool) := do
   let mut next := state
   let mut added := false
@@ -159,7 +195,9 @@ private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (Build
         let before := next.knowledge.facts.size
         next ← pushFact next config candidate.proposition candidate.proof
         added := added || next.knowledge.facts.size > before
-  return (next, added)
+  let (resolvedState, resolved) ← resolveDisjunctionsOnce config next
+  added := added || resolved
+  return (resolvedState, added)
 
 private def saturate (config : Config) (initial : BuildState) : MetaM (BuildState × Bool) := do
   let mut state := initial
@@ -190,20 +228,17 @@ private def contradiction? (state : BuildState) : MetaM (Option Expr) := do
     if (← normalize fact.proposition).isConstOf ``False then
       return some fact.proof
   for negative in facts do
-    match ← whnf negative.proposition with
-    | .forallE _ domain body _ =>
-        if !body.hasLooseBVar 0 && (← normalize body).isConstOf ``False then
-          for positive in facts do
-            let saved ← saveState
-            try
-              if ← isDefEq domain positive.proposition then
-                let proof ← instantiateMVars (mkApp negative.proof positive.proof)
-                checkEvidence (.const ``False []) proof
-                saved.restore
-                return some proof
-            catch _ => pure ()
+    if let some domain ← negatedDomain? negative.proposition then
+      for positive in facts do
+        let saved ← saveState
+        try
+          if ← isDefEq domain positive.proposition then
+            let proof ← instantiateMVars (mkApp negative.proof positive.proof)
+            checkEvidence (.const ``False []) proof
             saved.restore
-    | _ => pure ()
+            return some proof
+        catch _ => pure ()
+        saved.restore
   return none
 
 private def isTypeExpr (e : Expr) : MetaM Bool := do

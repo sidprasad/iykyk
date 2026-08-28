@@ -180,6 +180,7 @@ The first useful operations are:
 
 - split conjunctions and expose existential witnesses while preserving their
   shared identity and scope;
+- resolve a disjunction when one branch is disproved;
 - normalize equalities and local definitions;
 - apply a bounded set of explicitly supplied forward rules;
 - infer constructor shape when a proof excludes the other constructors;
