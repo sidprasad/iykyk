@@ -17,18 +17,18 @@ variable (edge Reach : Vertex → Vertex → Prop)
 
 example (source target : Vertex)
     (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 example (source target : Vertex)
     (route : ∃ middle, edge source middle ∧ edge middle target)
     (step : ∀ x y, edge x y → Reach x y) : True := by
-  iykyk source using [step]
+  wdyk source fyi [step]
   trivial
 
 example (source left right : Vertex)
     (choice : edge source left ∨ edge source right) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 end Iykyk.Examples.Graph

@@ -133,10 +133,11 @@ terms because it needs control over how witness identity appears in the stored e
 `Exists` lives in `Prop`, a classical chosen witness is generally noncomputable: it is a symbolic
 Lean term for proof and metaprogramming, not executable data recovered from an erased proof.
 
-### 2.3 `simp`, Aesop, and other automation
+### 2.3 `simp` and other automation
 
-`simp` is proof-producing normalization. Aesop is proof-producing search over a configurable rule
-set. Both can establish useful propositions, and iykyk exposes small opt-in hooks for them.
+`simp` is proof-producing normalization, so iykyk exposes it as a small opt-in hook. Aesop is
+proof-producing but goal-directed; without caller-selected goals, it does not yet have a precise
+inspection-wide role and is therefore deferred.
 
 Neither engine by itself specifies a semantic snapshot. A proof procedure answers questions such
 as “can this goal be transformed?” or “can this candidate proposition be proved?” It does not
@@ -159,7 +160,7 @@ proof author chose to produce; it does not compute the semantic neighborhood of 
 A local context also has no declaration representing “this bounded observation was truncated” or
 “`Γ` is contradictory, so the extractor is deliberately returning no ordinary knowledge.” Those
 are properties of the extraction process. They exist in iykyk because extraction returns an
-`ExtractionResult`, rather than pretending that every meaningful outcome must be another local
+`WdykResult`, rather than pretending that every meaningful outcome must be another local
 hypothesis. A widget is presentation: it still needs some account of the meaning to display. iykyk
 proposes the small semantic object between raw declarations and presentation.
 
@@ -169,8 +170,8 @@ proposes the small semantic object between raw declarations and presentation.
 | --- | --- | --- |
 | `cases`, `rcases`, `obtain` | Decompose a selected hypothesis by changing the proof state | The model for safe structural decomposition, used without exposing mutation as the API |
 | `Exists.choose`, mathlib `choose` | Select witnesses and prove their specifications | Stable symbolic witness terms shared across facts |
-| `simp` | Normalize propositions while transporting proofs | Optional fact normalization and candidate proving |
-| Aesop | Search for proofs under a rule policy | Optional bounded candidate and contradiction proving |
+| `simp` | Normalize propositions while transporting proofs | Optional fact normalization through `via` |
+| Aesop | Search for proofs under a rule policy | Deferred until inspection defines finite obligations |
 | `LocalContext` / `MetaM` | Inspect the current syntactic declarations and construct expressions | Raw input from which root projection and extraction status are computed |
 | Lean's kernel | Check proof terms | Per-run validation of the combined result |
 
@@ -230,7 +231,7 @@ shared middle vertex.
 Extraction computes a finite account `K` with the contract:
 
 \[
-  \operatorname{extract}(\Gamma,t)=K
+  \operatorname{wdyk}(\Gamma,t)=K
   \quad\Longrightarrow\quad
   \Gamma \models \llbracket K\rrbracket_t.
 \]
@@ -249,7 +250,7 @@ implemented rule derives it.
 
 **What about inconsistent contexts?**
 Classically, an inconsistent `Γ` entails every
-proposition, so returning arbitrary facts would be sound but useless. `ExtractionResult` therefore
+proposition, so returning arbitrary facts would be sound but useless. `WdykResult` therefore
 distinguishes ordinary knowledge from a checked contradiction.
 
 ## 5. The extracted program object
@@ -266,19 +267,19 @@ structure Witness where
   type : Expr
   term : Expr
 
-structure RootedKnowledge where
+structure Afaik where
   root : Expr
   scope : LocalContext
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
 
-inductive ExtractionResult where
-  | knowledge (value : RootedKnowledge)
+inductive WdykResult where
+  | afaik (value : Afaik)
   | inconsistent (value : Inconsistency)
 ```
 
-The actual constructors for `RootedKnowledge` and `Inconsistency` are private. Knowledge is created
+The actual constructors for `Afaik` and `Inconsistency` are private. Knowledge is created
 through checked smart constructors, projected by deletion, and marked truncated without changing
 its semantic content.
 
@@ -309,8 +310,8 @@ This stage reads the main context but does not replace its declarations or mutat
 The extracted facts live in the returned object; they are not installed as new hypotheses for the
 caller.
 
-If `using *` is selected, suitable implication-shaped raw hypotheses are also collected as forward
-rules. Plain extraction does not globally treat every implication as a rule.
+If `fyi *` is selected, rule-shaped facts discovered during decomposition may also participate in
+forward inference. Plain extraction does not globally treat every implication as an active rule.
 
 ### 6.2 Structural decomposition
 
@@ -331,15 +332,14 @@ limit.
 
 ### 6.3 Forward inference
 
-Rules may come from three explicit sources:
+Rules come from two explicit policies:
 
 ```lean
-iykyk source using [step]  -- exactly the listed rules
-iykyk source using *       -- listed rules plus suitable raw hypotheses
-iykyk source using facts   -- every established rule-shaped fact
+wdyk source fyi [step]  -- exactly the listed proved hypotheses
+wdyk source fyi *       -- every established rule-shaped fact
 ```
 
-Explicit `Iff` rules fire in both directions. `using facts` includes rule-shaped propositions
+Explicit `Iff` rules fire in both directions. `fyi *` includes rule-shaped propositions
 uncovered during decomposition, so later results can feed back into inference. This requires
 repeated rounds: one round may expose a rule, a later round may prove its premise, and the new
 conclusion may enable another rule.
@@ -363,22 +363,10 @@ Resolution runs to a local fixpoint within a saturation round. It can only expos
 already stored disjunctions and is bounded by the fact limit, so a chain of dependent disjunctive
 resolutions does not consume one global inference round per link.
 
-A direct proof of `False`, a positive fact paired with its negation, or an Aesop-produced
-contradiction yields `ExtractionResult.inconsistent` rather than an arbitrary maximal fact set.
+A direct proof of `False` or a positive fact paired with its negation yields
+`WdykResult.inconsistent` rather than an arbitrary maximal fact set.
 
-### 6.5 Candidate proving
-
-Callers may name propositions worth exposing:
-
-```lean
-iykyk source deriving [Reachable source] with [aesop]
-```
-
-Enabled engines try to prove those candidates. Failure is not an error and does not add a negative
-fact; the proposition remains unknown. Successfully proved candidates are decomposed and may
-participate in a second saturation pass.
-
-### 6.6 Projection to the root
+### 6.5 Projection to the root
 
 By default, the extractor retains the connected component containing the selected root. The
 prototype builds this component by following term occurrences through proposition arguments and
@@ -387,7 +375,12 @@ then removes unused witnesses.
 This is a deliberately simple relevance heuristic, not a complete semantic dependency analysis.
 It makes the first object small and gives future work a concrete policy to improve or replace.
 
-### 6.7 Certification
+For a value focus, projection retains the connected component containing that value. For an
+evidence focus such as `wdyk route`, the proposition proved by the selected term is decomposed
+directly; this avoids discarding its consequences merely because propositions do not syntactically
+contain their proof terms.
+
+### 6.6 Certification
 
 The remaining facts are conjoined in order. Every witness still appearing in them is abstracted
 into one existential binder, so repeated occurrences of one choice term become structural sharing
@@ -400,27 +393,25 @@ under one binder. For the graph example the certificate is:
 The combined proof is checked by `Lean.Kernel.check` in the captured local context. Certification
 is enabled by default.
 
-## 7. Relationship to `simp` and Aesop
+## 7. Relationship to `simp`
 
 The proof engines are deliberately hooks rather than the definition of extraction:
 
 ```lean
-iykyk source with [simp]
-iykyk source with [simp only [reverse]]
-iykyk source deriving [Reachable source] with [aesop]
+wdyk source via [simp]
+wdyk source via [simp only [reverse]]
 ```
 
 Standard `simp` uses Lean's active simp theorems and default simprocs. `simp only` uses only the
-listed entries, with minimal reflexivity builtins and no default simprocs. Aesop receives a bound on
-rule applications.
+listed entries, with minimal reflexivity builtins and no default simprocs.
 
 The engine boundary is proof-producing. A result crosses it only as a proposition and proof term;
 iykyk independently checks that evidence before adding the fact. Changing the search procedure can
-change which facts are discovered, but it does not change what makes a `RootedKnowledge` valid.
+change which facts are discovered, but it does not change what makes a `Afaik` valid.
 
-Plain `iykyk source` invokes neither `simp` nor Aesop. This matters because hidden normalization or
-search would make extraction difficult to predict. Users can opt into familiar automation without
-turning iykyk into a second general-purpose tactic language.
+Plain `wdyk source` does not invoke `simp`. This matters because hidden normalization would make
+extraction difficult to predict. Aesop is deliberately deferred: without caller-selected goals it
+does not yet have a precise inspection-wide set of obligations to solve.
 
 ## 8. Correctness and trust
 
@@ -495,7 +486,7 @@ Tactics such as `rcases` are designed to advance a proof. They consume or replac
 leave later tactics in a different state. That is appropriate for proving; it is the wrong contract
 for inspection.
 
-`Iykyk.extract` is designed as a read. It leaves the caller's goal and hypotheses alone, so the
+`Iykyk.wdyk` is designed as a read. It leaves the caller's goal and hypotheses alone, so the
 same observation can be requested repeatedly and observations can be placed at different proof
 points without changing the proof merely to make it inspectable. This is essential for comparing
 what was known before and after a sequence of tactics.
@@ -532,16 +523,16 @@ These choices can be documented, regression-tested, and changed deliberately.
 
 ### 9.5 Proof search is separated from knowledge validity
 
-Different engines may discover different subsets of the truth. By accepting only proof-backed
+Different mechanisms may discover different subsets of the truth. By accepting only proof-backed
 facts, the knowledge contract remains stable across those discovery policies. This permits a small,
-predictable default while allowing explicit stronger search.
+predictable default while allowing explicit normalization.
 
 ### 9.6 One context can support more than one observation
 
 The extracted value does not choose diagram nodes, relational atoms, source labels, JSON fields, or
 display syntax. Those are interpretations of the knowledge, not part of its truth conditions.
 
-Spytial is the first concrete integration: it calls `Iykyk.extract`, translates selected facts and
+Spytial is the first concrete integration: it calls `Iykyk.wdyk`, translates selected facts and
 witnesses into a relational instance, and then applies its own visualization pipeline. That
 integration demonstrates that the API is usable, but one consumer is not enough to establish that
 the abstraction is broadly reusable. A second materially different use would be stronger evidence.
@@ -622,12 +613,12 @@ The prototype currently supports:
 - equivalence directions;
 - preservation and checked resolution of disjunctions;
 - direct contradiction detection;
-- explicit, local, and established forward-rule policies;
-- opt-in standard `simp`, restricted `simp only`, and bounded Aesop;
+- explicit hypotheses and established-fact forward saturation;
+- opt-in standard `simp` and restricted `simp only`;
 - root-component projection;
 - bounded saturation with explicit truncation;
 - checked smart constructors and per-run kernel certification; and
-- a programmatic `Iykyk.extract` API with small consumer-neutral queries.
+- a programmatic `Iykyk.wdyk` API with small consumer-neutral queries.
 
 Important limitations remain:
 
@@ -655,9 +646,10 @@ Mathlib's `choose` tactic provides Skolemization. These mechanisms act on a sele
 construct selected terms; iykyk composes the same operations across a context and records the
 result.
 
-Lean's simplifier and Aesop are proof-producing automation. Aesop emphasizes configurable,
-white-box best-first search. iykyk treats these systems as optional proof suppliers rather than as
-the definition of the extracted object.
+Lean's simplifier and Aesop are proof-producing automation. The current `via` boundary exposes
+only simplification, whose input is the finite set of already established facts. Aesop emphasizes
+goal-directed best-first search and is deferred until inspection itself can define a principled
+finite set of obligations for it.
 
 ProofWidgets provides infrastructure for symbolic visualizations, tactic interfaces, and
 domain-specific goal displays. It addresses presentation and interaction; iykyk addresses the
@@ -740,7 +732,109 @@ base.
 - Cyrus Omar et al.,
   [*Live Functional Programming with Typed Holes*](https://doi.org/10.1145/3290327).
 
-## 13. Evaluation and next questions
+## 13. Command vocabulary and implementation plan
+
+The package keeps the name **iykyk**. The primary operation is `wdyk`, read as “what do you
+know about this expression?” Its result is an **Afaik**: an “as far as I know” value whose reported
+facts are proved, whose omissions are not claims of falsity, and whose saturation status says only
+whether this configured finite extraction reached a fixpoint.
+
+These names belong to the programmatic abstraction, not only its tactic frontend. The intended
+public boundary reads like this:
+
+```lean
+match ← Iykyk.wdyk subject { hypotheses := #[step], mechanisms := #[.simp] } with
+| .afaik view => Spytial.relationalizeAfaik view
+| .inconsistent contradiction => ...
+```
+
+The tactic is a human-facing frontend to that same operation:
+
+```lean
+wdyk source
+wdyk source fyi [step]
+wdyk source fyi *
+wdyk source fyi [step] via [simp]
+```
+
+The clauses describe information flow rather than caller-selected goals:
+
+| Command | Role | Previous surface syntax |
+| --- | --- | --- |
+| `wdyk focus` | Inspect finite knowledge around a selected value or evidence term | `iykyk root` |
+| `fyi [hypotheses]` | Identify proved hypotheses or rules that may participate in inference | `using [rules]` |
+| `fyi *` | Promote all discoverable rule-shaped knowledge and saturate | `using *`, `using facts` |
+| `via [mechanisms]` | Select proof-producing mechanisms; initially `simp` | `with [engines]` |
+
+`fyi` accepts proof terms, never bare unproved propositions. Plain `wdyk` still reads ordinary
+propositional locals as facts; `fyi` marks hypotheses that may be used generatively as forward
+rules, and `fyi *` opts into the strongest bounded established-fact saturation policy. `via`
+changes how proved information is processed, never what counts as evidence. In particular, simp
+can normalize established facts while transporting their proofs.
+
+Aesop is not included initially. It is goal directed and cannot enumerate arbitrary consequences;
+without caller-selected goals, inspection does not yet define a principled finite set of Aesop
+obligations. It can be added later if such a role emerges. `via` currently supports `simp` and
+`simp only`.
+
+The existing `deriving [propositions]` clause is removed, not renamed. It asks simp or Aesop to
+prove caller-selected goals and then inserts successful results into the snapshot. That is useful
+proof-assistant automation, but it is not part of the inspection abstraction. Particular
+entailment queries belong to downstream consumers of `Afaik`. No `lmk`, `checking`, or `wdym`
+command is included in this migration; a second command should be introduced only when a distinct
+programmatic operation and consumer justify it.
+
+### 13.1 Tagged implementation issues
+
+Every implementation issue for this change carries one or more of the command tags below.
+The tags identify the user-facing concept affected, even when most of the work is in shared parser,
+configuration, rendering, or test code. This plan is now implemented; it remains here as the
+rationale and release checklist:
+
+- **`[wdyk]` Shared public operation.** Introduce `Iykyk.wdyk` as the programmatic operation and
+  make the `wdyk` tactic a renderer over it. Keep the `Iykyk` namespace and package name. Update
+  Spytial and other consumers to call this operation rather than preserving `extract` as the
+  primary public vocabulary.
+- **`[wdyk]` Afaik result.** Replace the former knowledge/result vocabulary with an `Afaik` view
+  and a `WdykResult` that distinguishes `.afaik` from `.inconsistent`. Preserve the
+  private checked-construction boundary, witness sharing, captured scope, certificate, and
+  truncation flag. Prefer `saturated` over `complete` in rendered status text, since reaching an
+  extraction fixpoint is not logical completeness.
+- **`[wdyk]` Evidence focus.** Ensure the selected expression can be either a value, as in
+  `wdyk source`, or a proof term, as in `wdyk route`. Evidence-focused extraction decomposes the
+  selected proof directly rather than applying value-oriented term-connectivity projection.
+- **`[fyi]` Explicit evidence.** Replace `using [rules]` with `fyi [hypotheses]`. Preserve the
+  checked-evidence boundary: every entry must elaborate to a proof of a proposition. Listing an
+  implication or equivalence permits it to fire as a forward rule; no entry may be interpreted as
+  an unproved assumption.
+- **`[fyi]` Context-wide inference.** Replace the public distinction between `using *` and
+  `using facts` with `fyi *`, using the stronger established-fact saturation semantics. The lower
+  level `Config` may retain separate controls for integrations that need them, but the
+  conversational tactic should not expose raw-local versus subsequently established rules as two
+  nearly synonymous modes.
+- **`[via]` Proof-producing mechanisms.** Replace the former engine clause with `via [simp]`,
+  including `via [simp only [...]]`. Simp continues to normalize established facts. Defer Aesop
+  until finite inspection-generated obligations are specified. Diagnostics use the new vocabulary
+  and remain attached to the offending syntax.
+- **`[wdyk] [via]` Remove goal-directed candidates.** Delete the `deriving` grammar, candidate
+  configuration, candidate-proving pass, examples, and documentation. Keep downstream lookup of
+  propositions in an `Afaik`; do not replace candidate proving with another tactic clause.
+- **`[wdyk] [fyi] [via]` Compatibility policy.** Coordinate the programmatic rename with Spytial.
+  If the old API has not been released as stable, replace it directly and update both repositories
+  together. Otherwise retain old spellings for one documented deprecation cycle, elaborating them
+  to the same implementation rather than maintaining two paths.
+- **`[wdyk] [fyi] [via]` Documentation and tests.** Give each command or clause at least one
+  positive example and one misuse example where applicable, and pin its report or diagnostic
+  contract. README examples should lead with the conversational reading; implementation terms
+  such as engines and saturation belong in the detailed explanation that follows.
+
+The implementation is complete when the new examples compile, all report and error text uses the new
+vocabulary, Spytial consumes the new programmatic API, candidate proving is gone, and a
+repository-wide search finds old spellings only in an intentional compatibility section. The
+public abstraction and surface language change together; the kernel-checked knowledge contract
+does not.
+
+## 14. Evaluation and next questions
 
 The prototype should be judged on more than compilation. Evidence for the abstraction would
 include:
@@ -751,7 +845,7 @@ include:
    produces a kernel-accepted combined certificate.
 3. **Predictability.** Defaults remain small; every broader inference source and proof engine is
    explicit; truncation is visible.
-4. **Reuse.** At least two materially different integrations consume `RootedKnowledge` without
+4. **Reuse.** At least two materially different integrations consume `Afaik` without
    importing each other's vocabulary.
 5. **Stability.** Improving or replacing proof search does not require changing the validity
    contract of the extracted value.
@@ -771,7 +865,7 @@ The next design questions are:
   boundary?
 - Which second integration best tests whether the interface is genuinely consumer-neutral?
 
-## 14. Non-claims
+## 15. Non-claims
 
 iykyk does not claim to:
 

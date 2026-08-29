@@ -19,7 +19,7 @@ variable (Reach : Vertex → Prop)
 -- rounds, the second resumes where it stopped and reaches a fixpoint. Only the final pass decides
 -- the status, so a run that genuinely finished is reported `complete`.
 /--
-info: iykyk
+info: afaik
   root: source
   witnesses: (none)
   facts:
@@ -31,19 +31,19 @@ info: iykyk
     [5] P6 source
     [6] P7 source
   certificate: P1 source ∧ P2 source ∧ P3 source ∧ P4 source ∧ P5 source ∧ P6 source ∧ P7 source
-  status: complete
+  status: saturated
 -/
 #guard_msgs in
 example (source : Vertex) (P1 P2 P3 P4 P5 P6 P7 : Vertex → Prop)
     (seed : P1 source)
     (r1 : ∀ x, P1 x → P2 x) (r2 : ∀ x, P2 x → P3 x) (r3 : ∀ x, P3 x → P4 x)
     (r4 : ∀ x, P4 x → P5 x) (r5 : ∀ x, P5 x → P6 x) (r6 : ∀ x, P6 x → P7 x) : True := by
-  iykyk source using [r1, r2, r3, r4, r5, r6]
+  wdyk source fyi [r1, r2, r3, r4, r5, r6]
   trivial
 
 -- A genuinely productive rule never reaches a fixpoint, so it must still report `truncated`.
 /--
-info: iykyk
+info: afaik
   root: start
   witnesses: (none)
   facts:
@@ -70,11 +70,11 @@ info: iykyk
 #guard_msgs in
 example (start : Vertex) (next : Vertex → Vertex)
     (seed : Reach start) (step : ∀ x, Reach x → Reach (next x)) : True := by
-  iykyk start using [step]
+  wdyk start fyi [step]
   trivial
 
 example (start : Vertex) (positive : Reach start) (negative : ¬ Reach start) : True := by
-  iykyk start
+  wdyk start
   trivial
 
 end Iykyk.Examples.Bounded

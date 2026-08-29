@@ -40,14 +40,13 @@ soundness. Inconsistency remains a separate result because it entails every fact
 | recursive conjunction/existential splitting | `Formula.decompose`, `decompose_sound`, `decompose_lossless` |
 | explicit, raw-local, or established rule application (`applyRule`) | `Derivation.instantiate`, `Derivation.forward` |
 | existential decomposition via `Classical.choose` | `exists_shared_witness_iff` |
-| engine-proved candidate (`proveCandidate`) | certificate disjunct of `extract_sound` |
-| `RootedKnowledge.empty` / `addFact` | `CertifiedKnowledge.empty` / `add` |
-| `RootedKnowledge.project` (`projectToRoot`) | `CertifiedKnowledge.project` |
-| `RootedKnowledge.withTruncated` | `CertifiedKnowledge.withTruncated` |
+| `Afaik.empty` / `addFact` | `CertifiedKnowledge.empty` / `add` |
+| `Afaik.project` (`projectToRoot`) | `CertifiedKnowledge.project` |
+| `Afaik.withTruncated` | `CertifiedKnowledge.withTruncated` |
 | distinct `Inconsistency` result | `inconsistent_entails`, `CertifiedResult` |
 | disjunctions kept whole | `branch_choice_unsound` |
 
-The correspondence is structural. `RootedKnowledge` and `Inconsistency` have private constructors,
+The correspondence is structural. `Afaik` and `Inconsistency` have private constructors,
 so the checked smart constructors in `Iykyk/Knowledge.lean` are the only construction path. Every
 finished result is then reified into one proposition: its facts are conjoined and each shared witness
 becomes one existential binder. `Iykyk/Certify.lean` checks the combined proof with

@@ -138,7 +138,7 @@ Abstract extractor soundness. Facts are admitted through exactly two doors: a de
 calculus, or an external certificate of entailment. The runtime counterpart of the second door is a
 proof term checked by Lean's kernel.
 -/
-theorem extract_sound {Γ : Context World} {hyps : List (Fact World)}
+theorem wdyk_sound {Γ : Context World} {hyps : List (Fact World)}
     {knowledge : Knowledge World Root}
     (hypsHold : ∀ fact ∈ hyps, Entails Γ fact)
     (generated : ∀ {fact}, fact ∈ knowledge.facts →
@@ -380,7 +380,7 @@ theorem common_of_disjunction {Γ : Context World} {left right result : Fact Wor
 
 `CertifiedKnowledge` is the semantic image of the runtime smart-constructor API: an empty value is
 sound, a fact enters only with a certificate, and projection and truncation preserve soundness.
-The runtime `RootedKnowledge` has a private constructor precisely so that these are the only ways
+The runtime `Afaik` has a private constructor precisely so that these are the only ways
 to build one.
 -/
 
@@ -408,7 +408,7 @@ def CertifiedKnowledge.add {World : Type u} {Root : Type v} {Γ : Context World}
   value := { knowledge.value with facts := fact :: knowledge.value.facts }
   root_eq := knowledge.root_eq
   certificate := by
-    intro candidate present
+    intro fact present
     simp only [List.mem_cons] at present
     rcases present with rfl | present
     · exact proof
@@ -432,12 +432,12 @@ def CertifiedKnowledge.withTruncated {World : Type u} {Root : Type v} {Γ : Cont
   root_eq := knowledge.root_eq
   certificate := knowledge.certificate
 
-/-- Candidate admission is sound regardless of which engine produced the certificate. -/
-theorem candidate_admission_sound {World : Type u} {Root : Type v} {Γ : Context World}
+/-- Fact admission is sound whenever the supplied entailment certificate is valid. -/
+theorem fact_admission_sound {World : Type u} {Root : Type v} {Γ : Context World}
     {root : World → Root} (knowledge : CertifiedKnowledge Γ root)
-    (candidate : Fact World) (certificate : Entails Γ candidate) :
-    (knowledge.add candidate certificate).value.Sound Γ :=
-  (knowledge.add candidate certificate).certificate
+    (fact : Fact World) (certificate : Entails Γ fact) :
+    (knowledge.add fact certificate).value.Sound Γ :=
+  (knowledge.add fact certificate).certificate
 
 /-- Root projection, modeled as fact deletion, preserves soundness. -/
 theorem projection_preserves_soundness {World : Type u} {Root : Type v} {Γ : Context World}

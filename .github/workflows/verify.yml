@@ -1,7 +1,7 @@
 name: Kernel verification
 
-# leanchecker re-checks the *entire* compiled environment -- including batteries and
-# aesop -- from scratch through an independent kernel pass. That is far stronger than
+# leanchecker re-checks the *entire* compiled environment from scratch through an
+# independent kernel pass. That is far stronger than
 # `lake build`, which trusts the elaborator's own output, but it also redoes work on
 # dependencies that did not change. Running it here instead of on every pull request
 # keeps PR feedback fast while still verifying everything that lands on main.
@@ -9,8 +9,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # Mondays at 06:00 UTC. Catches rot from an upstream aesop/batteries change even
-    # during a stretch with no commits.
+    # Mondays at 06:00 UTC. Catches toolchain or environment rot even during a
+    # stretch with no commits.
     - cron: "0 6 * * 1"
   workflow_dispatch:
 

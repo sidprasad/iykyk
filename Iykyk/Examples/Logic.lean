@@ -18,22 +18,22 @@ set_option linter.unusedVariables false
 variable {Vertex : Type}
 
 /--
-info: iykyk
+info: afaik
   root: source
   witnesses: (none)
   facts:
     [0] A source → B source
     [1] B source → A source
   certificate: (A source → B source) ∧ (B source → A source)
-  status: complete
+  status: saturated
 -/
 #guard_msgs in
 example (source : Vertex) (A B : Vertex → Prop) (equivalence : A source ↔ B source) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 /--
-info: iykyk
+info: afaik
   root: source
   witnesses: (none)
   facts:
@@ -41,17 +41,17 @@ info: iykyk
     [1] A source → False
     [2] B source
   certificate: (A source ∨ B source) ∧ (A source → False) ∧ B source
-  status: complete
+  status: saturated
 -/
 #guard_msgs in
 example (source : Vertex) (A B : Vertex → Prop)
     (choice : A source ∨ B source) (notA : ¬ A source) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 example (source : Vertex) (A B : Vertex → Prop)
     (choice : A source ∨ B source) (notB : ¬ B source) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 -- A chain of dependent resolutions: each resolved branch is the negation the next disjunction
@@ -59,7 +59,7 @@ example (source : Vertex) (A B : Vertex → Prop)
 -- exposed regardless of its length, and the result is `complete` rather than bounded by
 -- `maxRounds`.
 /--
-info: iykyk
+info: afaik
   root: source
   witnesses: (none)
   facts:
@@ -81,7 +81,7 @@ info: iykyk
         (A4 source ∨ ¬A5 source) ∧
           (A5 source ∨ B source) ∧
             (A2 source → False) ∧ (A3 source → False) ∧ (A4 source → False) ∧ (A5 source → False) ∧ B source
-  status: complete
+  status: saturated
 -/
 #guard_msgs in
 example (source : Vertex) (A1 A2 A3 A4 A5 B : Vertex → Prop)
@@ -89,7 +89,7 @@ example (source : Vertex) (A1 A2 A3 A4 A5 B : Vertex → Prop)
     (d1 : A1 source ∨ ¬ A2 source) (d2 : A2 source ∨ ¬ A3 source)
     (d3 : A3 source ∨ ¬ A4 source) (d4 : A4 source ∨ ¬ A5 source)
     (d5 : A5 source ∨ B source) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 end Iykyk.Examples.Logic

@@ -24,7 +24,7 @@ variable {Vertex : Type}
 variable (edge : Vertex → Vertex → Prop)
 
 /--
-info: iykyk
+info: afaik
   root: source
   witnesses:
     •0 : Vertex := Classical.choose route
@@ -32,38 +32,55 @@ info: iykyk
     [0] edge source (Classical.choose route)
     [1] edge (Classical.choose route) target
   certificate: ∃ w0, edge source w0 ∧ edge w0 target
-  status: complete
+  status: saturated
 -/
 #guard_msgs in
 example (source target : Vertex)
     (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
-  iykyk source
+  wdyk source
   trivial
 
 /--
-info: iykyk
+info: afaik
+  root: route
+  witnesses:
+    •0 : Vertex := Classical.choose route
+  facts:
+    [0] edge source (Classical.choose route)
+    [1] edge (Classical.choose route) target
+  certificate: ∃ w0, edge source w0 ∧ edge w0 target
+  status: saturated
+-/
+#guard_msgs in
+example (source target : Vertex)
+    (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
+  wdyk route
+  trivial
+
+/--
+info: afaik
   root: source
   witnesses: (none)
   facts:
     [0] edge source middle
     [1] edge middle target
   certificate: edge source middle ∧ edge middle target
-  status: complete
+  status: saturated
 -/
 #guard_msgs in
 example (source target middle : Vertex)
     (left : edge source middle) (right : edge middle target) : True := by
   have route : ∃ middle, edge source middle ∧ edge middle target :=
     ⟨middle, left, right⟩
-  iykyk source
+  wdyk source
   trivial
 
 open Lean Meta
 
--- `RootedKnowledge` is unforgeable: its constructor is private, and the only way to insert a
+-- `Afaik` is unforgeable: its constructor is private, and the only way to insert a
 -- fact checks the proof. A proof of `True` must not certify `False`.
 run_meta do
-  let knowledge := RootedKnowledge.empty (mkConst ``Bool.true) (← getLCtx)
+  let knowledge := Afaik.empty (mkConst ``Bool.true) (← getLCtx)
   let rejected ← try
       discard <| knowledge.addFact (mkConst ``False) (mkConst ``True.intro)
       pure false
@@ -73,7 +90,7 @@ run_meta do
 
 -- The same boundary rejects a witness term whose type does not match its declaration.
 run_meta do
-  let knowledge := RootedKnowledge.empty (mkConst ``Bool.true) (← getLCtx)
+  let knowledge := Afaik.empty (mkConst ``Bool.true) (← getLCtx)
   let rejected ← try
       discard <| knowledge.addWitness (mkConst ``Nat) (mkConst ``Bool.true)
       pure false

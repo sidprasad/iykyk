@@ -7,7 +7,7 @@ public section
 /-!
 # Kernel certification of extraction results
 
-A `RootedKnowledge` stores one proof per fact, each checked at insertion time by the elaborator.
+Afaik stores one proof per fact, each checked at insertion time by the elaborator.
 This module builds the single proposition the whole knowledge value expresses — the design
 document's `⟦K⟧ₜ` — and checks its combined proof with Lean's kernel in the captured
 scope:
@@ -51,7 +51,7 @@ The single proposition expressed by a knowledge value, with its proof: the conju
 facts, with every witness that still occurs abstracted into an existential quantifier. Witness
 sharing is structural in the result — one binder, several occurrences.
 -/
-def RootedKnowledge.certificate (knowledge : RootedKnowledge) : MetaM KnownFact := do
+def Afaik.certificate (knowledge : Afaik) : MetaM KnownFact := do
   let mut result ← conjunctionOf knowledge.facts
   for witness in knowledge.witnesses.reverse do
     let term ← instantiateMVars witness.term
@@ -85,7 +85,7 @@ def kernelCheckClaim (scope : LocalContext) (claim evidence : Expr) : MetaM Unit
         {exception.toMessageData (← getOptions)}"
 
 /-- Build the combined certificate and have the kernel check it in the captured scope. -/
-def RootedKnowledge.kernelCertify (knowledge : RootedKnowledge) : MetaM KnownFact := do
+def Afaik.kernelCertify (knowledge : Afaik) : MetaM KnownFact := do
   let certificate ← knowledge.certificate
   kernelCheckClaim knowledge.scope certificate.proposition certificate.proof
   return certificate
@@ -95,8 +95,8 @@ def Inconsistency.kernelCertify (inconsistency : Inconsistency) : MetaM Unit :=
   kernelCheckClaim inconsistency.scope (mkConst ``False) inconsistency.proof
 
 /-- Kernel-check whichever certificate an extraction result carries. -/
-def ExtractionResult.kernelCertify : ExtractionResult → MetaM Unit
-  | .knowledge value => discard value.kernelCertify
+def WdykResult.kernelCertify : WdykResult → MetaM Unit
+  | .afaik value => discard value.kernelCertify
   | .inconsistent value => value.kernelCertify
 
 end Iykyk

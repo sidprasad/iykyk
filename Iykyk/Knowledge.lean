@@ -11,7 +11,7 @@ The structures in this module are the consumer boundary. Expressions and proofs 
 the captured `LocalContext`. Existential witnesses use stable choice terms, so one unknown can occur
 in more than one fact without introducing an unsafe free variable.
 
-`RootedKnowledge` and `Inconsistency` have private constructors: the only way to build or change
+`Afaik` and `Inconsistency` have private constructors: the only way to build or change
 one is through the smart constructors below, each of which either checks the supplied evidence or
 performs an operation that cannot invalidate it (subset projection, setting the truncation flag).
 These operations mirror, one for one, the operations proved sound in
@@ -36,10 +36,9 @@ structure KnownFact where
   proof : Expr
   deriving Inhabited
 
-/-- An opt-in proof-producing engine used to refine or establish candidate facts. -/
-inductive ProofEngine where
+/-- An opt-in proof-producing mechanism used to normalize established facts. -/
+inductive Via where
   | simp
-  | aesop
   deriving Inhabited, BEq, Repr
 
 /-- A shared unknown exposed from an existential proof. -/
@@ -67,12 +66,12 @@ Finite knowledge rooted at one selected expression.
 `scope` is part of the certificate: it is the context in which `root`, facts, and proofs are valid.
 Witness terms themselves are scoped `Classical.choose` applications rather than new free variables.
 
-The constructor is private. A `RootedKnowledge` can only be grown from `RootedKnowledge.empty` by
+The constructor is private. An `Afaik` can only be grown from `Afaik.empty` by
 `addFact` (which checks the proof), `addWitness` (which checks the term), `project` (which can only
 delete), and `withTruncated` (which changes no semantic content). Holding a value of this type is
 therefore evidence that every fact in it was checked against its proof.
 -/
-structure RootedKnowledge where
+structure Afaik where
   private mk ::
   root : Expr
   scope : LocalContext
@@ -82,7 +81,7 @@ structure RootedKnowledge where
   deriving Inhabited
 
 /-- Empty knowledge about `root`, valid in `scope`. Mirrors `CertifiedKnowledge.empty`. -/
-def RootedKnowledge.empty (root : Expr) (scope : LocalContext) : RootedKnowledge where
+def Afaik.empty (root : Expr) (scope : LocalContext) : Afaik where
   root := root
   scope := scope
   witnesses := #[]
@@ -93,8 +92,7 @@ def RootedKnowledge.empty (root : Expr) (scope : LocalContext) : RootedKnowledge
 Add one fact, checking its proof first. Mirrors `CertifiedKnowledge.add`, whose certificate
 argument corresponds to the check performed here. Callers must be in the knowledge's `scope`.
 -/
-def RootedKnowledge.addFact (knowledge : RootedKnowledge) (proposition proof : Expr) :
-    MetaM RootedKnowledge := do
+def Afaik.addFact (knowledge : Afaik) (proposition proof : Expr) : MetaM Afaik := do
   let proposition ← instantiateMVars proposition
   let proof ← instantiateMVars proof
   if proposition.hasMVar || proof.hasMVar then
@@ -103,8 +101,7 @@ def RootedKnowledge.addFact (knowledge : RootedKnowledge) (proposition proof : E
   return { knowledge with facts := knowledge.facts.push { proposition, proof } }
 
 /-- Expose one shared unknown, checking that its term has the declared type. -/
-def RootedKnowledge.addWitness (knowledge : RootedKnowledge) (type term : Expr) :
-    MetaM RootedKnowledge := do
+def Afaik.addWitness (knowledge : Afaik) (type term : Expr) : MetaM Afaik := do
   let type ← instantiateMVars type
   let term ← instantiateMVars term
   checkEvidence type term
@@ -116,15 +113,14 @@ Keep only the selected facts and witnesses. Deletion cannot invalidate the remai
 facts; this mirrors `CertifiedKnowledge.project`, where the subset condition holds by construction
 because `project` can only filter.
 -/
-def RootedKnowledge.project (knowledge : RootedKnowledge)
-    (keepFact : KnownFact → Bool) (keepWitness : Witness → Bool) : RootedKnowledge :=
+def Afaik.project (knowledge : Afaik)
+    (keepFact : KnownFact → Bool) (keepWitness : Witness → Bool) : Afaik :=
   { knowledge with
     facts := knowledge.facts.filter keepFact
     witnesses := knowledge.witnesses.filter keepWitness }
 
 /-- Set the operational truncation flag. Mirrors `CertifiedKnowledge.withTruncated`. -/
-def RootedKnowledge.withTruncated (knowledge : RootedKnowledge) (truncated : Bool) :
-    RootedKnowledge :=
+def Afaik.withTruncated (knowledge : Afaik) (truncated : Bool) : Afaik :=
   { knowledge with truncated }
 
 /--
@@ -149,23 +145,20 @@ def Inconsistency.ofProof (root : Expr) (scope : LocalContext) (proof : Expr) :
   return { root, scope, proof }
 
 /-- Inconsistency is kept distinct from ordinary knowledge to avoid displaying arbitrary facts. -/
-inductive ExtractionResult where
-  | knowledge (value : RootedKnowledge)
+inductive WdykResult where
+  | afaik (value : Afaik)
   | inconsistent (value : Inconsistency)
   deriving Inhabited
 
 /-- Bounds and relevance policy for extraction. -/
 structure Config where
-  rules : Array Expr := #[]
-  /-- Add suitable proof hypotheses from the local context to `rules`. -/
-  useLocalRules : Bool := false
+  /-- Proved hypotheses or rules the caller explicitly invites the extractor to use. -/
+  hypotheses : Array Expr := #[]
   /-- Let rule-shaped established facts participate in later saturation rounds. -/
   useEstablishedRules : Bool := false
-  candidates : Array Expr := #[]
-  engines : Array ProofEngine := #[]
+  mechanisms : Array Via := #[]
   /-- When set, `simp` uses only these entries, without the global set or default simprocs. -/
   simpOnlyRules : Option (Array Expr) := none
-  maxAesopRuleApplications : Nat := 200
   maxRounds : Nat := 4
   maxFacts : Nat := 128
   rootOnly : Bool := true

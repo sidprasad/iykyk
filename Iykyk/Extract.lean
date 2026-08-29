@@ -9,11 +9,11 @@ public section
 # Certified extraction engine
 
 This deliberately small engine decomposes conjunctions and existentials, applies explicitly
-selected Horn-style rules, asks opt-in engines about named candidates, detects contradictions, and
-optionally keeps only facts connected to the selected root. Rules may come from a caller list, raw
-local hypotheses, or established facts; these sources remain opt-in.
+selected Horn-style rules, detects contradictions, and optionally keeps only facts connected to
+the selected root. Rules may come from a caller list or established facts; these sources remain
+opt-in.
 
-The engine never constructs a `RootedKnowledge` directly: it grows one through the checked smart
+The engine never constructs an `Afaik` directly: it grows one through the checked smart
 constructors in `Iykyk/Knowledge.lean`, so every inserted fact is checked against its proof at the
 moment of insertion. Unless disabled in the configuration, the finished result is then re-checked
 end to end by Lean's kernel (`Iykyk/Certify.lean`).
@@ -27,7 +27,7 @@ namespace Iykyk
 open Lean Meta
 
 private structure BuildState where
-  knowledge : RootedKnowledge
+  knowledge : Afaik
   hitFactLimit : Bool := false
 
 private structure Candidate where
@@ -121,18 +121,6 @@ private partial def isForwardRuleType (type : Expr) : MetaM Bool := do
       let argument ← mkFreshExprMVar (some domain)
       isForwardRuleType (body.instantiate1 argument)
   | _ => return false
-
-private def collectLocalRules : MetaM (Array Expr) := do
-  let mut rules := #[]
-  for localDecl in ← getLCtx do
-    unless localDecl.isImplementationDetail do
-      if ← isProp localDecl.type then
-        let saved ← saveState
-        let suitable ← isForwardRuleType localDecl.type
-        saved.restore
-        if suitable then
-          rules := rules.push (.fvar localDecl.fvarId)
-  return rules
 
 private def collectContext (config : Config) (initial : BuildState) : MetaM BuildState := do
   let mut state := initial
@@ -240,7 +228,7 @@ private def resolveDisjunctions (config : Config) (state : BuildState) :
 private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (BuildState × Bool) := do
   let mut next := state
   let mut added := false
-  let mut rules := config.rules
+  let mut rules := config.hypotheses
   if config.useEstablishedRules then
     for rule in ← establishedForwardRules state.knowledge.facts do
       if !rules.contains rule then
@@ -265,18 +253,6 @@ private def saturate (config : Config) (initial : BuildState) : MetaM (BuildStat
     if !added then
       return (state, state.hitFactLimit)
   return (state, state.hitFactLimit || lastRoundAdded)
-
-private def proveCandidates (config : Config) (initial : BuildState) : MetaM BuildState := do
-  let mut state := initial
-  let candidateConfig := {
-    config with engines := config.engines.filter (· != .simp)
-  }
-  for proposition in config.candidates do
-    let proposition ← normalize proposition
-    let proof? ← proveCandidate config proposition
-    if let some proof := proof? then
-      state ← decompose candidateConfig proof proposition state
-  return state
 
 private def contradiction? (state : BuildState) : MetaM (Option Expr) := do
   let facts := state.knowledge.facts
@@ -312,7 +288,7 @@ private partial def argumentAtoms (e : Expr) : MetaM (Array Expr) := do
   return atoms
 
 /-- Keep the connected component of facts containing `root`, preserving shared witness identity. -/
-def projectToRoot (knowledge : RootedKnowledge) : MetaM RootedKnowledge := do
+def projectToRoot (knowledge : Afaik) : MetaM Afaik := do
   let mut anchors := #[knowledge.root]
   let mut selected : Array KnownFact := #[]
   let mut changed := true
@@ -331,31 +307,33 @@ def projectToRoot (knowledge : RootedKnowledge) : MetaM RootedKnowledge := do
     (fun fact => kept.any (·.proposition == fact.proposition))
     (fun witness => kept.any fun fact => containsExpr fact.proposition witness.term)
 
-/-- Extract finite, proof-backed knowledge about `root` without mutating the proof goal. -/
-def extract (root : Expr) (config : Config := {}) : MetaM ExtractionResult := do
+/-- Compute finite, proof-backed knowledge about `root` without mutating the proof goal. -/
+def wdyk (root : Expr) (config : Config := {}) : MetaM WdykResult := do
   let root ← normalize root
-  let localRules ← if config.useLocalRules then collectLocalRules else pure #[]
-  let config := { config with rules := config.rules ++ localRules }
   let scope ← instantiateLCtxMVars (← getLCtx)
-  let initial ← collectContext config { knowledge := .empty root scope }
+  let empty : BuildState := { knowledge := .empty root scope }
+  let rootType ← instantiateMVars (← inferType root)
+  let initial ← if ← isProp rootType then
+    decompose config root rootType empty
+  else
+    collectContext config empty
   -- The first pass's verdict is deliberately not carried forward. `saturate` reports "I may not
   -- have finished", and the second pass resumes from exactly where the first stopped, so if that
   -- pass converges the final state is a genuine fixpoint however many rounds the first one needed.
   -- A real fact-limit truncation still reaches this point: `hitFactLimit` is sticky in
   -- `BuildState` and every `saturate` returns it.
   let (state, _) ← saturate config initial
-  let state ← proveCandidates config state
   let (state, truncated) ← saturate config state
-  let automatedContradiction ← if config.uses .aesop then
-    proveCandidate config (.const ``False [])
-  else
-    pure none
-  let result ← if let some proof := automatedContradiction.or (← contradiction? state) then
-    pure (ExtractionResult.inconsistent (← Inconsistency.ofProof root scope proof))
+  let contradiction ← contradiction? state
+  let result ← if let some proof := contradiction then
+    pure (WdykResult.inconsistent (← Inconsistency.ofProof root scope proof))
   else
     let knowledge := state.knowledge.withTruncated truncated
-    let knowledge ← if config.rootOnly then projectToRoot knowledge else pure knowledge
-    pure (ExtractionResult.knowledge knowledge)
+    let knowledge ← if config.rootOnly && !(← isProp rootType) then
+      projectToRoot knowledge
+    else
+      pure knowledge
+    pure (WdykResult.afaik knowledge)
   if config.kernelCheck then
     result.kernelCertify
   return result

@@ -24,13 +24,13 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           # Builds all `defaultTargets`: runtime, examples, and the metatheory.
-          # The examples are the de-facto test suite -- every `iykyk` invocation in
+          # The examples are the de-facto test suite -- every `wdyk` invocation in
           # them has to elaborate, while every metatheory theorem must kernel-check.
           build: true
 
           # `lake test` is wired to the IykykExamples library (see lakefile.toml), so
           # the example suite is reported as its own step rather than buried in the
-          # build log. Verified to exit non-zero when an `iykyk` invocation regresses.
+          # build log. Verified to exit non-zero when a `wdyk` invocation regresses.
           test: true
 
           # The load-bearing gate for this project. iykyk's claim is that every fact
