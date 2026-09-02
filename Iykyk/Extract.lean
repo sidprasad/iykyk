@@ -311,7 +311,8 @@ def projectToRoot (knowledge : Afaik) : MetaM Afaik := do
 def wdyk (root : Expr) (config : Config := {}) : MetaM WdykResult := do
   let root ← normalize root
   let scope ← instantiateLCtxMVars (← getLCtx)
-  let empty : BuildState := { knowledge := .empty root scope }
+  let localInstances ← getLocalInstances
+  let empty : BuildState := { knowledge := .empty root scope localInstances }
   let rootType ← instantiateMVars (← inferType root)
   let initial ← if ← isProp rootType then
     decompose config root rootType empty

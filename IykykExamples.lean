@@ -5,3 +5,4 @@ public import Iykyk.Examples.Bounded
 public import Iykyk.Examples.Automation
 public import Iykyk.Examples.Certified
 public import Iykyk.Examples.Logic
+public import Iykyk.Examples.Query
