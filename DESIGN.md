@@ -410,8 +410,10 @@ iykyk independently checks that evidence before adding the fact. Changing the se
 change which facts are discovered, but it does not change what makes a `Afaik` valid.
 
 Plain `wdyk source` does not invoke `simp`. This matters because hidden normalization would make
-extraction difficult to predict. Aesop is deliberately deferred: without caller-selected goals it
-does not yet have a precise inspection-wide set of obligations to solve.
+extraction difficult to predict. Goal-directed mechanisms instead live behind the downstream
+`prove`/`prove?` query boundary, where the consumer supplies one proposition and a deterministic
+heartbeat budget. The initial focused mechanisms are `simp` and Presburger arithmetic via
+`omega`; neither mechanism adds its consequences back into the snapshot.
 
 ## 8. Correctness and trust
 
@@ -646,10 +648,10 @@ Mathlib's `choose` tactic provides Skolemization. These mechanisms act on a sele
 construct selected terms; iykyk composes the same operations across a context and records the
 result.
 
-Lean's simplifier and Aesop are proof-producing automation. The current `via` boundary exposes
-only simplification, whose input is the finite set of already established facts. Aesop emphasizes
-goal-directed best-first search and is deferred until inspection itself can define a principled
-finite set of obligations for it.
+Lean's simplifier, Omega, and Aesop are proof-producing automation. The extraction-time `via`
+boundary exposes only simplification, whose input is the finite set of already established facts.
+The downstream query boundary also exposes simplification and Omega for bounded, caller-selected
+goals. Aesop remains deferred pending a comparably explicit and predictable search policy.
 
 ProofWidgets provides infrastructure for symbolic visualizations, tactic interfaces, and
 domain-specific goal displays. It addresses presentation and interaction; iykyk addresses the
@@ -773,9 +775,10 @@ changes how proved information is processed, never what counts as evidence. In p
 can normalize established facts while transporting their proofs.
 
 Aesop is not included initially. It is goal directed and cannot enumerate arbitrary consequences;
-without caller-selected goals, inspection does not yet define a principled finite set of Aesop
-obligations. It can be added later if such a role emerges. `via` currently supports `simp` and
-`simp only`.
+without caller-selected goals, inspection does not define a principled finite set of Aesop
+obligations. `via` on extraction currently supports `simp` and `simp only`. Downstream
+`prove`/`prove?` queries accept caller-selected goals and support focused `simp` and `omega`
+mechanisms without modifying the extracted `Afaik`.
 
 The existing `deriving [propositions]` clause is removed, not renamed. It asks simp or Aesop to
 prove caller-selected goals and then inserts successful results into the snapshot. That is useful

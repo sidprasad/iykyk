@@ -75,15 +75,19 @@ structure Afaik where
   private mk ::
   root : Expr
   scope : LocalContext
+  /-- Typeclass instances registered in `scope`, needed when a later query re-enters it. -/
+  localInstances : LocalInstances
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
   deriving Inhabited
 
 /-- Empty knowledge about `root`, valid in `scope`. Mirrors `CertifiedKnowledge.empty`. -/
-def Afaik.empty (root : Expr) (scope : LocalContext) : Afaik where
+def Afaik.empty (root : Expr) (scope : LocalContext) (localInstances : LocalInstances := #[]) :
+    Afaik where
   root := root
   scope := scope
+  localInstances := localInstances
   witnesses := #[]
   facts := #[]
   truncated := false
