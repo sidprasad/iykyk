@@ -5,6 +5,11 @@ are predicates selecting possible worlds, and facts are predicates that must hol
 world. The theorems are deliberately falsifiable—they rule out incorrect extraction designs rather
 than merely restating that supplied certificates are valid.
 
+`Entails` and `Knowledge.Sound` expose their definitions through Lean's module boundary. This lets
+downstream mechanizations consume a sound knowledge value one world and one fact at a time without
+redefining IYKYK's semantics. It does not expose the runtime representation or weaken the checked
+`Lean.Expr` boundary.
+
 ## What is proved
 
 **Soundness of the calculus.** `Derivation hyps fact` is a syntactic calculus over hypothesis facts.

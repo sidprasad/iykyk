@@ -40,7 +40,7 @@ abbrev Context (World : Type u) := World → Prop
 abbrev Fact (World : Type u) := World → Prop
 
 /-- `Γ` entails `fact` when the fact holds in every world admitted by `Γ`. -/
-def Entails (Γ : Context World) (fact : Fact World) : Prop :=
+@[expose] def Entails (Γ : Context World) (fact : Fact World) : Prop :=
   ∀ world, Γ world → fact world
 
 /-- The context described by a list of hypothesis facts: every listed fact holds. -/
@@ -54,7 +54,7 @@ structure Knowledge (World : Type u) (Root : Type v) where
   truncated : Bool := false
 
 /-- Every fact in a knowledge value follows from its context. -/
-def Knowledge.Sound (Γ : Context World) (knowledge : Knowledge World Root) : Prop :=
+@[expose] def Knowledge.Sound (Γ : Context World) (knowledge : Knowledge World Root) : Prop :=
   ∀ {fact}, fact ∈ knowledge.facts → Entails Γ fact
 
 /-!
