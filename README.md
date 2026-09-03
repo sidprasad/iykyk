@@ -52,6 +52,9 @@ wdyk route
 -- Supply proved hypotheses or forward rules that may be useful.
 wdyk source fyi [step]
 
+-- Never mind these local hypotheses: exclude them from this extraction.
+wdyk source nvm [h2]
+
 -- Let every established rule-shaped fact participate in bounded saturation.
 wdyk source fyi *
 
@@ -70,6 +73,10 @@ hypotheses as rules or run `simp`.
 
 - `fyi [hypotheses]` accepts only proof terms. An implication or equivalence may fire as a forward
   rule; an unproved proposition is never treated as an assumption.
+- `nvm [hypotheses]` names local declarations to omit from this one extraction. An excluded
+  declaration is skipped during context collection, so it forms no relevance bridge, fires no
+  forward rule, and triggers no contradiction — the rest of the proof state is untouched, unlike
+  `clear`. Exclusion takes precedence over `fyi`: a declaration named in both is dropped.
 - `fyi *` uses rule-shaped facts discovered anywhere in the established knowledge and runs to a
   bounded fixed point.
 - `via [simp]` uses Lean's active simp set and simprocs. `via [simp only [...]]` uses the listed
@@ -153,6 +160,7 @@ research framing.
 - conjunction splitting and shared existential witnesses;
 - evidence-focused extraction such as `wdyk route`;
 - equivalence decomposition and explicit forward rules;
+- per-query exclusion of local hypotheses through `nvm [..]`;
 - bounded established-fact saturation through `fyi *`;
 - opt-in standard `simp` and restricted `simp only`;
 - preservation of disjunctions plus checked disjunctive syllogism;
@@ -174,6 +182,7 @@ lake env lean Iykyk/Examples/Graph.lean
 lake env lean Iykyk/Examples/Bounded.lean
 lake env lean Iykyk/Examples/Automation.lean
 lake env lean Iykyk/Examples/Certified.lean
+lake env lean Iykyk/Examples/Exclusion.lean
 lake env lean Iykyk/Examples/Query.lean
 ```
 

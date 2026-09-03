@@ -766,6 +766,7 @@ The clauses describe information flow rather than caller-selected goals:
 | `wdyk focus` | Inspect finite knowledge around a selected value or evidence term | `iykyk root` |
 | `fyi [hypotheses]` | Identify proved hypotheses or rules that may participate in inference | `using [rules]` |
 | `fyi *` | Promote all discoverable rule-shaped knowledge and saturate | `using *`, `using facts` |
+| `nvm [hypotheses]` | Exclude named local declarations from this extraction | — (new) |
 | `via [mechanisms]` | Select proof-producing mechanisms; initially `simp` | `with [engines]` |
 
 `fyi` accepts proof terms, never bare unproved propositions. Plain `wdyk` still reads ordinary
@@ -773,6 +774,20 @@ propositional locals as facts; `fyi` marks hypotheses that may be used generativ
 rules, and `fyi *` opts into the strongest bounded established-fact saturation policy. `via`
 changes how proved information is processed, never what counts as evidence. In particular, simp
 can normalize established facts while transporting their proofs.
+
+`nvm [hypotheses]` is the one subtractive clause. It names local declarations by `FVarId`, and the
+extractor skips them during context collection, so their decomposed facts and witnesses never enter
+the knowledge. An excluded declaration therefore forms no relevance bridge and takes no part in
+forward saturation, contradiction detection, or downstream queries for that one extraction. This is
+narrower than the Lean-level workaround `clear h`: exclusion changes only what a single `wdyk`
+observes, never the caller's proof state, so a rule-shaped hypothesis needed later in the proof can
+still be omitted from an inspection that would otherwise inherit an unwanted connection. Because
+identity is by declaration rather than by structural equality of the proposition, an excluded
+hypothesis and an unrelated proof of the same statement are distinguished. Exclusion is defined to
+take precedence over `fyi`: a declaration named in both clauses is dropped, keeping the guarantee
+that a name in `nvm` plays no part in the extraction. The lower-level `Config.excludedHypotheses`
+field carries the same set for programmatic callers such as Spytial, which controls which certified
+knowledge is extracted rather than how a consumer renders it.
 
 Aesop is not included initially. It is goal directed and cannot enumerate arbitrary consequences;
 without caller-selected goals, inspection does not define a principled finite set of Aesop

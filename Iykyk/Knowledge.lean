@@ -158,6 +158,19 @@ inductive WdykResult where
 structure Config where
   /-- Proved hypotheses or rules the caller explicitly invites the extractor to use. -/
   hypotheses : Array Expr := #[]
+  /--
+  Local declarations the caller excludes from this extraction, identified by `FVarId`.
+
+  An excluded declaration is skipped during context collection, so its decomposed facts and
+  witnesses never enter the knowledge; it therefore cannot participate in relevance, contradiction
+  detection, established-rule saturation, or downstream queries for this extraction. The rest of the
+  Lean context is untouched — exclusion suppresses collection, it does not `clear` the hypothesis.
+
+  Exclusion takes precedence over `hypotheses`: a declaration named here is dropped even when the
+  same bare `fvar` is also supplied as an explicit rule. Identity is by `FVarId`, so an excluded
+  declaration and an unrelated proof of the same proposition are distinguished.
+  -/
+  excludedHypotheses : Array FVarId := #[]
   /-- Let rule-shaped established facts participate in later saturation rounds. -/
   useEstablishedRules : Bool := false
   mechanisms : Array Via := #[]
