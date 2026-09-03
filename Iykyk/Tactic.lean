@@ -34,6 +34,7 @@ private meta def elaborateSimpOnlyRule (stx : Syntax) : TacticM Expr := do
 
 private structure ParsedClauses where
   fyiTerms : Array Syntax := #[]
+  excludedTerms : Array Syntax := #[]
   useEstablishedRules : Bool := false
   mechanisms : Array Via := #[]
   simpOnlyRules : Option (Array Syntax) := none
@@ -49,6 +50,7 @@ syntax "simp" "only" "[" term,* "]" : wdykVia
 declare_syntax_cat wdykClause
 syntax "fyi " "[" term,* "]" : wdykClause
 syntax "fyi " "*" : wdykClause
+syntax "nvm " "[" term,* "]" : wdykClause
 syntax "via " "[" wdykVia,* "]" : wdykClause
 
 private meta def parseVia (stx : Syntax) : TacticM ParsedVia := do
@@ -65,6 +67,8 @@ private meta def parseClauses (clauses : Array Syntax) : TacticM ParsedClauses :
         parsed := { parsed with fyiTerms := parsed.fyiTerms ++ hypotheses.getElems }
     | `(wdykClause| fyi *) =>
         parsed := { parsed with useEstablishedRules := true }
+    | `(wdykClause| nvm [$hypotheses:term,*]) =>
+        parsed := { parsed with excludedTerms := parsed.excludedTerms ++ hypotheses.getElems }
     | `(wdykClause| via [$mechanisms:wdykVia,*]) =>
         for mechanismStx in mechanisms.getElems do
           match ← parseVia mechanismStx with
@@ -127,11 +131,13 @@ private meta def runWdyk (rootStx : Syntax) (clauseStxs : Array Syntax) : Tactic
     let clauses ← parseClauses clauseStxs
     let root ← instantiateMVars (← Term.elabTerm rootStx none)
     let fyiTerms ← clauses.fyiTerms.mapM elaborateFyi
+    let excludedHypotheses ← clauses.excludedTerms.mapM getFVarId
     let simpOnlyRules ← match clauses.simpOnlyRules with
       | none => pure none
       | some rules => pure (some (← rules.mapM elaborateSimpOnlyRule))
     let config : Config := {
       hypotheses := fyiTerms
+      excludedHypotheses
       useEstablishedRules := clauses.useEstablishedRules
       mechanisms := clauses.mechanisms
       simpOnlyRules

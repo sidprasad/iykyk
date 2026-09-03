@@ -73,10 +73,11 @@ private partial def structurallyKnown (facts : Array KnownFact) (proposition : E
     matchesKnownFact facts proposition
 
 /-- Whether an in-scope term already witnesses an existential's structurally decomposed body. -/
-private def existentialAlreadyKnown (type predicate : Expr) (facts : Array KnownFact) :
-    MetaM Bool := do
+private def existentialAlreadyKnown (config : Config) (type predicate : Expr)
+    (facts : Array KnownFact) : MetaM Bool := do
   for localDecl in ← getLCtx do
-    unless localDecl.isImplementationDetail do
+    unless localDecl.isImplementationDetail
+        || config.excludedHypotheses.contains localDecl.fvarId do
       let candidate := Expr.fvar localDecl.fvarId
       let saved ← saveState
       let hasType ← try isDefEq (← inferType candidate) type catch _ => pure false
@@ -104,7 +105,7 @@ private partial def decompose (config : Config) (proof proposition : Expr)
     decompose config backward (← inferType backward) state
   else if proposition.isAppOfArity ``Exists 2 then
     let args := proposition.getAppArgs
-    if ← existentialAlreadyKnown args[0]! args[1]! state.knowledge.facts then
+    if ← existentialAlreadyKnown config args[0]! args[1]! state.knowledge.facts then
       return state
     let witnessTerm ← mkAppM ``Classical.choose #[proof]
     let state := { state with knowledge := ← state.knowledge.addWitness args[0]! witnessTerm }
@@ -125,7 +126,8 @@ private partial def isForwardRuleType (type : Expr) : MetaM Bool := do
 private def collectContext (config : Config) (initial : BuildState) : MetaM BuildState := do
   let mut state := initial
   for localDecl in ← getLCtx do
-    unless localDecl.isImplementationDetail do
+    unless localDecl.isImplementationDetail
+        || config.excludedHypotheses.contains localDecl.fvarId do
       if ← isProp localDecl.type then
         state ← decompose config (.fvar localDecl.fvarId) localDecl.type state
   return state
@@ -225,10 +227,16 @@ private def resolveDisjunctions (config : Config) (state : BuildState) :
     addedAny := true
   return (next, addedAny)
 
+/-- Whether `rule` is a bare reference to a declaration the caller excluded with `nvm`. -/
+private def ruleExcluded (config : Config) (rule : Expr) : Bool :=
+  match rule with
+  | .fvar id => config.excludedHypotheses.contains id
+  | _ => false
+
 private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (BuildState × Bool) := do
   let mut next := state
   let mut added := false
-  let mut rules := config.hypotheses
+  let mut rules := config.hypotheses.filter (fun rule => !ruleExcluded config rule)
   if config.useEstablishedRules then
     for rule in ← establishedForwardRules state.knowledge.facts do
       if !rules.contains rule then
