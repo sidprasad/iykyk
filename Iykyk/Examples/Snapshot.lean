@@ -51,9 +51,9 @@ private meta def expectStatus (stx : Syntax) (snapshot : Snapshot) (expected : S
 private meta def expectCoherentGroups (stx : Syntax) (snapshot : Snapshot) : TacticM Unit := do
   for group in snapshot.witnesses do
     for index in group.facts do
-      unless index < snapshot.facts.size do
-        throwErrorAt stx "witness group {group.witness.id} indexes a missing fact [{index}]"
-      unless mentions snapshot.facts[index]!.proposition group.witness.term do
+      let some fact := snapshot.facts[index]?
+        | throwErrorAt stx "witness group {group.witness.id} indexes a missing fact [{index}]"
+      unless mentions fact.proposition group.witness.term do
         throwErrorAt stx "fact [{index}] does not mention witness {group.witness.id}"
 
 /-- The certificate is what the kernel accepts in the snapshot's own scope. -/
@@ -63,9 +63,8 @@ private meta def expectCertified (snapshot : Snapshot) : TacticM Unit :=
 private meta def assertSharedWitness (rootStx : Syntax) : TacticM Unit := withMainContext do
   let snapshot ← snapshotOf rootStx
   expectStatus rootStx snapshot .saturated
-  unless snapshot.witnesses.size == 1 do
-    throwErrorAt rootStx "expected one witness group, found {snapshot.witnesses.size}"
-  let group := snapshot.witnesses[0]!
+  let #[group] := snapshot.witnesses
+    | throwErrorAt rootStx "expected one witness group, found {snapshot.witnesses.size}"
   unless group.facts == #[0, 1] do
     throwErrorAt rootStx "expected the group to identify facts [0, 1], found {repr group.facts}"
   expectCoherentGroups rootStx snapshot

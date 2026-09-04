@@ -105,8 +105,12 @@ private def mentions (proposition term : Expr) : Bool :=
 private def witnessGroups (knowledge : Afaik) : Array WitnessGroup :=
   knowledge.witnesses.map fun witness => {
     witness
-    facts := (Array.range knowledge.facts.size).filter fun index =>
-      mentions knowledge.facts[index]!.proposition witness.term
+    facts := Id.run do
+      let mut indices := #[]
+      for h : index in [:knowledge.facts.size] do
+        if mentions knowledge.facts[index].proposition witness.term then
+          indices := indices.push index
+      return indices
   }
 
 /--
