@@ -109,6 +109,21 @@ match ← Iykyk.wdyk subject {
     pure ()
 ```
 
+`WdykResult.snapshot` presents either result in the shape of the metatheory's consumer contract:
+root, scope, facts, witness groups (each witness with the indices of the facts that mention it), a
+`Status`, and the combined certificate.
+
+```lean
+let snapshot ← (← Iykyk.wdyk subject).snapshot
+for group in snapshot.witnesses do
+  -- group.facts indexes snapshot.facts: the facts that share group.witness
+  pure ()
+match snapshot.status with
+| .saturated => pure ()    -- the configured finite run reached a fixpoint; not completeness
+| .truncated => pure ()    -- a bound stopped the run early
+| .inconsistent => pure () -- snapshot.certificate proves False; no ordinary facts
+```
+
 `Iykyk.Query` provides consumer-neutral lookup over `Afaik`. Spytial uses this public operation and
 relationalizes the returned `Afaik`; it does not depend on the tactic renderer.
 
@@ -147,7 +162,10 @@ proves:
   universal instantiation, and forward application;
 - losslessness of conjunction, equivalence, and shared-witness existential decomposition; and
 - counterexamples showing why existential components cannot receive unrelated witnesses and why
-  a disjunction cannot be replaced by either branch.
+  a disjunction cannot be replaced by either branch; and
+- a consumer contract `Γ ; root ⊢extract[policy] K` over a witness-aware snapshot, whose laws are
+  fact soundness, one shared witness per existential proof, soundness-preserving projection and
+  truncation, and a status that is certified when inconsistent and never a completeness claim.
 
 Runtime construction mirrors those proofs. `Afaik` and `Inconsistency` have private constructors;
 facts and witnesses enter only through checked smart constructors. Each finished `Afaik` is reified
@@ -166,7 +184,9 @@ research framing.
 - preservation of disjunctions plus checked disjunctive syllogism;
 - direct inconsistency detection;
 - projection to the connected component containing a value focus;
-- an unforgeable `Afaik` and per-run kernel certification; and
+- an unforgeable `Afaik` and per-run kernel certification;
+- a witness-aware `Snapshot` view of any result, in the shape of the metatheory's consumer
+  contract; and
 - a programmatic `Iykyk.wdyk` API with consumer-neutral lookup and bounded proof queries.
 
 The representation is intentionally small. It stores Lean `Expr`s and proof terms in a captured
@@ -184,6 +204,7 @@ lake env lean Iykyk/Examples/Automation.lean
 lake env lean Iykyk/Examples/Certified.lean
 lake env lean Iykyk/Examples/Exclusion.lean
 lake env lean Iykyk/Examples/Query.lean
+lake env lean Iykyk/Examples/Snapshot.lean
 ```
 
 The project uses Lean 4.33.1.

@@ -283,6 +283,11 @@ The actual constructors for `Afaik` and `Inconsistency` are private. Knowledge i
 through checked smart constructors, projected by deletion, and marked truncated without changing
 its semantic content.
 
+`WdykResult.snapshot` (`Iykyk/Snapshot.lean`) presents either result as one `Snapshot`—root,
+scope, facts, witness groups, status, and certificate—which is the shape of the metatheory's
+consumer contract (§8.2). A witness group pairs one witness with the indices of the facts that
+mention its term.
+
 The fields have distinct roles:
 
 - `root` identifies the selected term;
@@ -436,7 +441,7 @@ or crosses the explicitly trusted boundary.
 ### 8.2 What the formal metatheory proves
 
 The separate model in `metatheory/IykykMetatheory.lean` treats contexts as sets of possible worlds
-and proves four families of results:
+and proves five families of results:
 
 1. **Derivation soundness.** Hypothesis lookup, conjunction and equivalence elimination,
    disjunctive syllogism, universal instantiation, and forward application preserve entailment.
@@ -446,6 +451,12 @@ and proves four families of results:
    decomposition jointly reconstruct the information they decompose.
 4. **Certified-knowledge closure.** Empty knowledge is sound; adding a certified fact, projecting,
    marking truncation, and strengthening the context preserve soundness.
+5. **Snapshot contract.** The judgment `Γ ; root ⊢extract[policy] K` packages a finished
+   result—root, finite checked facts, witness groups, context, and status—and its laws are
+   theorems: every fact is entailed and so is the combined proposition `⟦K⟧ₜ`; each witness group
+   is satisfied by one value in every compatible world; projection and truncation preserve
+   soundness; an inconsistent status carries a proof; and `saturated` is not a completeness
+   claim, since the judgment admits a saturated snapshot that omits an entailed fact.
 
 Soundness alone would be satisfied by an extractor that always returned no facts. The losslessness
 theorems rule out that vacuous interpretation for the structural fragment. Concrete
