@@ -110,8 +110,9 @@ match ← Iykyk.wdyk subject {
 ```
 
 `WdykResult.snapshot` presents either result in the shape of the metatheory's consumer contract:
-root, scope, facts, witness groups (each witness with the indices of the facts that mention it), a
-`Status`, and the combined certificate.
+root, scope and local instances, facts, witness groups (each witness with the indices of the facts
+that mention it), a `Status`, and the combined certificate, which the snapshot has the kernel check
+in its scope whether or not `wdyk` did.
 
 ```lean
 let snapshot ← (← Iykyk.wdyk subject).snapshot
@@ -163,12 +164,14 @@ proves:
 - losslessness of conjunction, equivalence, and shared-witness existential decomposition; and
 - counterexamples showing why existential components cannot receive unrelated witnesses and why
   a disjunction cannot be replaced by either branch; and
-- a consumer contract `Γ ; root ⊢extract[policy] K` over a witness-aware snapshot, whose laws are
-  fact soundness, one shared witness per existential proof, soundness-preserving projection and
-  truncation, and a status that is certified when inconsistent and never a completeness claim.
+- a validity judgment over a witness-aware snapshot, whose laws are fact soundness, one shared
+  witness per existential proof, soundness-preserving projection and truncation, and a status
+  that is certified when inconsistent and never a completeness claim. It says which snapshots are
+  acceptable, not which one a run computes.
 
-Runtime construction mirrors those proofs. `Afaik` and `Inconsistency` have private constructors;
-facts and witnesses enter only through checked smart constructors. Each finished `Afaik` is reified
+Runtime construction mirrors those proofs. `Afaik`, `Inconsistency`, and `Snapshot` have private
+constructors and no `Inhabited` instance; facts and witnesses enter only through checked smart
+constructors. Each finished `Afaik` is reified
 as one existentially quantified conjunction and checked by the kernel. See
 [`metatheory/README.md`](./metatheory/README.md) and [DESIGN.md](./DESIGN.md) for the full boundary and
 research framing.

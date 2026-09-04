@@ -12,14 +12,18 @@ These tests pin the runtime side of the snapshot contract (`Iykyk/Snapshot.lean`
 proved in `metatheory/IykykMetatheory.lean`:
 
 * a shared existential witness yields one witness group whose facts are exactly the facts that
-  mention its term, and a certificate that binds that witness once (`Extracts.shared_witness`,
-  `Extracts.witness_facts`);
+  mention its term, and a certificate that binds that witness once
+  (`ValidSnapshot.shared_witness`, `ValidSnapshot.witness_facts`);
 * a productive rule under a small fact bound reports `truncated` and respects the bound
-  (`Extracts.bounded`; the status is not a completeness claim);
+  (`ValidSnapshot.bounded`; the status is not a completeness claim);
 * a contradiction reports `inconsistent` with `False` certified and no ordinary facts
-  (`Extracts.inconsistent_certified`); and
+  (`ValidSnapshot.inconsistent_certified`, and `Snapshot.interp` is `False` there);
 * relevance projection drops a witness together with the facts that mentioned it, so the kept
-  groups still index facts of the snapshot (`Snapshot.Sound.project`, `Extracts.witness_facts`).
+  groups still index facts of the snapshot (`Snapshot.Sound.project`,
+  `ValidSnapshot.witness_facts`);
+* the snapshot boundary kernel-checks the certificate even when `wdyk` was told not to; and
+* `Snapshot`, `Afaik`, and `Inconsistency` cannot be forged from outside their module: no
+  `Inhabited` instance, no accessible constructor, and no structure update.
 -/
 
 namespace Iykyk.Examples.Snapshot
@@ -81,6 +85,16 @@ private meta def assertTruncatedWithin (rootStx : Syntax) (ruleStxs : Array Synt
     throwErrorAt rootStx "expected at most {maxFacts} facts, found {snapshot.facts.size}"
   expectCertified snapshot
 
+/--
+With `kernelCheck := false`, `wdyk` skips its own kernel check. The snapshot boundary still runs
+one, so the certificate a consumer receives is kernel-checked regardless of that configuration.
+-/
+private meta def assertCheckedAtBoundary (rootStx : Syntax) : TacticM Unit := withMainContext do
+  let snapshot ← snapshotOf rootStx { kernelCheck := false }
+  expectStatus rootStx snapshot .saturated
+  expectCoherentGroups rootStx snapshot
+  expectCertified snapshot
+
 private meta def assertInconsistent (rootStx : Syntax) : TacticM Unit := withMainContext do
   let snapshot ← snapshotOf rootStx
   expectStatus rootStx snapshot .inconsistent
@@ -103,16 +117,19 @@ private meta def assertWitnessGroups (rootStx : Syntax) (expected : Nat) (rootOn
   expectCertified snapshot
 
 syntax "guard_iykyk_snapshot_shared " term : tactic
-syntax "guard_iykyk_snapshot_truncated_within " num " facts " term " fyi " "[" term,* "]" : tactic
+syntax "guard_iykyk_snapshot_truncated_within " num " on " term " fyi " "[" term,* "]" : tactic
+syntax "guard_iykyk_snapshot_checked_at_boundary " term : tactic
 syntax "guard_iykyk_snapshot_inconsistent " term : tactic
 syntax "guard_iykyk_snapshot_groups " num " for " term : tactic
 syntax "guard_iykyk_snapshot_groups_unprojected " num " for " term : tactic
 
 elab_rules : tactic
   | `(tactic| guard_iykyk_snapshot_shared $root:term) => assertSharedWitness root
-  | `(tactic| guard_iykyk_snapshot_truncated_within $bound:num facts $root:term
+  | `(tactic| guard_iykyk_snapshot_truncated_within $bound:num on $root:term
         fyi [$rules:term,*]) =>
       assertTruncatedWithin root rules.getElems bound.getNat
+  | `(tactic| guard_iykyk_snapshot_checked_at_boundary $root:term) =>
+      assertCheckedAtBoundary root
   | `(tactic| guard_iykyk_snapshot_inconsistent $root:term) => assertInconsistent root
   | `(tactic| guard_iykyk_snapshot_groups $count:num for $root:term) =>
       assertWitnessGroups root count.getNat true
@@ -131,7 +148,13 @@ example (source target : Vertex)
 -- A productive rule under a small fact bound: the run stops early and says so.
 example (start : Vertex) (next : Vertex → Vertex)
     (seed : Reach start) (step : ∀ x, Reach x → Reach (next x)) : True := by
-  guard_iykyk_snapshot_truncated_within 3 facts start fyi [step]
+  guard_iykyk_snapshot_truncated_within 3 on start fyi [step]
+  trivial
+
+-- The boundary's own kernel check does not depend on `wdyk`'s configuration.
+example (source target : Vertex)
+    (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
+  guard_iykyk_snapshot_checked_at_boundary source
   trivial
 
 -- A contradiction: `False` certified, no ordinary knowledge.
@@ -147,5 +170,37 @@ example (source target other : Vertex)
   guard_iykyk_snapshot_groups_unprojected 2 for source
   guard_iykyk_snapshot_groups 1 for source
   trivial
+
+/-!
+## Trust tests
+
+Holding a `Snapshot`, `Afaik`, or `Inconsistency` is evidence only if there is no way to obtain
+one except through the checked path. This file is a different module from the definitions, so
+what fails here fails for every consumer.
+-/
+
+-- No `Inhabited` instance: `default` would be an unchecked value.
+run_meta do
+  for typeName in [``Afaik, ``Inconsistency, ``Snapshot] do
+    if (← synthInstance? (← mkAppM ``Inhabited #[mkConst typeName])).isSome then
+      throwError "{typeName} is Inhabited, so `default` would bypass its checked constructor"
+
+-- The constructor is not accessible by name.
+/-- error: Unknown constant `Iykyk.Snapshot.mk` -/
+#guard_msgs in
+example : Snapshot :=
+  Snapshot.mk (mkConst ``True) {} #[] #[] #[] .saturated ⟨mkConst ``True, mkConst ``True.intro⟩
+
+-- Nor through structure instance notation.
+/-- error: invalid {...} notation, constructor for `Snapshot` is marked as private -/
+#guard_msgs in
+example : Snapshot :=
+  { root := mkConst ``True, scope := {}, localInstances := #[], facts := #[], witnesses := #[]
+    status := .saturated, certificate := ⟨mkConst ``True, mkConst ``True.intro⟩ }
+
+-- Nor can a legitimately obtained snapshot be altered by structure update.
+/-- error: invalid {...} notation, constructor for `Snapshot` is marked as private -/
+#guard_msgs in
+def tamper (snapshot : Snapshot) : Snapshot := { snapshot with status := .saturated }
 
 end Iykyk.Examples.Snapshot

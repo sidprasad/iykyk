@@ -69,7 +69,8 @@ Witness terms themselves are scoped `Classical.choose` applications rather than 
 The constructor is private. An `Afaik` can only be grown from `Afaik.empty` by
 `addFact` (which checks the proof), `addWitness` (which checks the term), `project` (which can only
 delete), and `withTruncated` (which changes no semantic content). Holding a value of this type is
-therefore evidence that every fact in it was checked against its proof.
+therefore evidence that every fact in it was checked against its proof. For the same reason the
+type deliberately has no `Inhabited` instance: `default` would be an unchecked value.
 -/
 structure Afaik where
   private mk ::
@@ -80,7 +81,6 @@ structure Afaik where
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
-  deriving Inhabited
 
 /-- Empty knowledge about `root`, valid in `scope`. Mirrors `CertifiedKnowledge.empty`. -/
 def Afaik.empty (root : Expr) (scope : LocalContext) (localInstances : LocalInstances := #[]) :
@@ -130,29 +130,30 @@ def Afaik.withTruncated (knowledge : Afaik) (truncated : Bool) : Afaik :=
 /--
 A proved contradiction in `scope`. Kept distinct from ordinary knowledge because an inconsistent
 context entails every proposition, so displaying arbitrary facts would be technically sound and
-practically useless. The constructor is private; `Inconsistency.ofProof` checks the proof.
+practically useless. The constructor is private and there is no `Inhabited` instance;
+`Inconsistency.ofProof` checks the proof and is the only way to obtain one.
 -/
 structure Inconsistency where
   private mk ::
   root : Expr
   scope : LocalContext
+  /-- Typeclass instances registered in `scope`, needed when a consumer re-enters it. -/
+  localInstances : LocalInstances
   proof : Expr
-  deriving Inhabited
 
 /-- Package a checked proof of `False`. -/
-def Inconsistency.ofProof (root : Expr) (scope : LocalContext) (proof : Expr) :
-    MetaM Inconsistency := do
+def Inconsistency.ofProof (root : Expr) (scope : LocalContext) (proof : Expr)
+    (localInstances : LocalInstances := #[]) : MetaM Inconsistency := do
   let proof ← instantiateMVars proof
   if proof.hasMVar then
     throwError "iykyk internal error: contradiction proof may not contain metavariables"
   checkEvidence (mkConst ``False) proof
-  return { root, scope, proof }
+  return { root, scope, localInstances, proof }
 
 /-- Inconsistency is kept distinct from ordinary knowledge to avoid displaying arbitrary facts. -/
 inductive WdykResult where
   | afaik (value : Afaik)
   | inconsistent (value : Inconsistency)
-  deriving Inhabited
 
 /-- Bounds and relevance policy for extraction. -/
 structure Config where

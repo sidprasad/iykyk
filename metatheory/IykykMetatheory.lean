@@ -23,9 +23,10 @@ The development is arranged so that each theorem says something an implementatio
   unrelated existential witnesses and unconditional choice of a disjunctive branch.
 * `CertifiedKnowledge` is the API contract mirrored by the runtime smart constructors: facts enter
   only with an entailment certificate, and projection and truncation cannot invalidate soundness.
-* `Snapshot` and the judgment `Extracts` (`Γ ; root ⊢extract[policy] K`) package a finished
-  result for consumers: root, finite checked facts, witness groups, context, and status. Its laws
-  are theorems about the judgment, and `saturated_not_complete` shows status is not completeness.
+* `Snapshot` and the validity judgment `ValidSnapshot` package a finished result for consumers:
+  root, finite checked facts, witness groups, context, and status. The judgment says which
+  snapshots are acceptable, not which one a run computes; its laws are theorems about it, and
+  `saturated_not_complete` shows status is not completeness.
 
 The operational extractor works with `Lean.Expr`, `LocalContext`, and `MetaM`. The bridge between
 the two layers is documented in `metatheory/README.md`; its runtime half is the kernel-checked
@@ -515,20 +516,23 @@ witness groups identifying which facts came from one existential proof, and the 
 finite run. The context in which its terms are meaningful is the type index `Γ`, so a snapshot
 cannot be separated from its context.
 
-`Extracts Γ root policy K` is the judgment `Γ ; root ⊢extract[policy] K`. Its rules are the runtime
-smart constructors, one for one, and the derivations it admits are the existing small calculus:
-`Derivation` (hypotheses, conjunction and equivalence decomposition, instantiation, forward
-application, safe disjunction resolution), existential opening with one shared witness, and
-externally certified facts. The theorems after it are the laws a consumer may rely on:
+`ValidSnapshot Γ root maxFacts K` is a validity judgment: it says which snapshots are acceptable
+answers about `root` in `Γ` under the fact bound, and its rules are the runtime smart constructors
+one for one. It is not an operational semantics of `wdyk`. The `certify` rule admits any entailed
+fact, `withTruncated` records either status, and the only policy content it constrains is the fact
+bound, so it does not say which facts a run finds, which rules were enabled, or whether saturation
+really occurred. Instantiating the judgment for an actual run would need trace evidence per fact,
+which is the subject of issue #3. What it does give a consumer are the laws:
 
-1. every fact in `K` follows from `Γ` (`Extracts.sound`, `Extracts.entails`, and the combined
-   `Extracts.interp`);
-2. facts projected from one existential proof refer to one shared witness (`Extracts.shared`,
-   `Extracts.shared_witness`, `Extracts.witness_facts`);
+1. every fact in `K` follows from `Γ` (`ValidSnapshot.sound`, `ValidSnapshot.entails`), and so
+   does the combined proposition `⟦K⟧` (`ValidSnapshot.interp`), which is `False` for an
+   inconsistent snapshot;
+2. facts projected from one existential proof refer to one shared witness
+   (`ValidSnapshot.shared`, `ValidSnapshot.shared_witness`, `ValidSnapshot.witness_facts`);
 3. relevance projection and truncation preserve soundness (`Snapshot.Sound.project`,
    `Snapshot.Sound.withTruncated`, and the `project` and `withTruncated` rules); and
 4. the status says whether the finite run saturated or stopped early. An inconsistent status is
-   certified (`Extracts.inconsistent_certified`); a saturated one is not a completeness claim
+   certified (`ValidSnapshot.inconsistent_certified`); a saturated one is not a completeness claim
    (`saturated_not_complete`).
 
 Nothing here says how a consumer renders a snapshot. There are no atoms, tuples, or labels: only
@@ -549,14 +553,6 @@ inductive Status where
 @[expose] def Status.isTruncated : Status → Bool
   | .truncated => true
   | _ => false
-
-/--
-The semantic content of an extraction policy is its fact bound. Round limits, rule selection, and
-proof-producing mechanisms decide which facts a run finds, not whether they are sound (policy
-separation), so they do not appear here.
--/
-structure Policy where
-  maxFacts : Nat
 
 /--
 One existential proof's shared unknown, together with the predicates the snapshot states about it.
@@ -665,34 +661,48 @@ structure Snapshot {World : Type u} (Γ : Context World) (Root : Type v) where
   /-- The outcome of the finite run. -/
   status : Status
 
-/-- Every fact follows from the context and every witness group is sound. -/
+/--
+A snapshot is sound when every fact follows from the context, every witness group is sound, and an
+inconsistent status is backed by a proof that the context entails `False`.
+-/
 @[expose] def Snapshot.Sound {Γ : Context World} (K : Snapshot Γ Root) : Prop :=
-  (∀ fact ∈ K.facts, Entails Γ fact) ∧ ∀ group ∈ K.witnesses, group.Sound
+  (∀ fact ∈ K.facts, Entails Γ fact) ∧ (∀ group ∈ K.witnesses, group.Sound) ∧
+    (K.status = .inconsistent → Inconsistent Γ)
 
 /-- Witness groups point into the fact list: every fact a group states is a fact of the snapshot. -/
 @[expose] def Snapshot.Coherent {Γ : Context World} (K : Snapshot Γ Root) : Prop :=
   ∀ group ∈ K.witnesses, ∀ predicate ∈ group.predicates, group.fact predicate ∈ K.facts
 
 /--
-The single proposition a snapshot expresses, the design document's `⟦K⟧ₜ`: every fact holds, and
-each witness group is satisfied by one value. The runtime counterpart is `Afaik.certificate`.
+The single proposition a snapshot expresses, the design document's `⟦K⟧`. An inconsistent
+snapshot expresses `False`, whatever else it carries; any other snapshot expresses that every fact
+holds and each witness group is satisfied by one value. The runtime counterpart is the
+certificate of `Iykyk.Snapshot`: `Afaik.certificate` for ordinary knowledge and the proof of
+`False` for an `Inconsistency`.
 -/
 @[expose] def Snapshot.interp {Γ : Context World} (K : Snapshot Γ Root) : Fact World :=
-  fun world => (∀ fact ∈ K.facts, fact world) ∧
-    ∀ group ∈ K.witnesses, ∃ value : group.Value,
-      ∀ predicate ∈ group.predicates, predicate world value
+  fun world =>
+    match K.status with
+    | .inconsistent => False
+    | _ => (∀ fact ∈ K.facts, fact world) ∧
+        ∀ group ∈ K.witnesses, ∃ value : group.Value,
+          ∀ predicate ∈ group.predicates, predicate world value
 
 /-- Forget witness groups and status, keeping the truncation bit. -/
 @[expose] def Snapshot.toKnowledge {Γ : Context World} (K : Snapshot Γ Root) :
     Knowledge World Root :=
   { root := K.root, facts := K.facts, truncated := K.status.isTruncated }
 
-/-- A sound snapshot entails its combined proposition. -/
+/-- A sound snapshot entails its combined proposition, in both the ordinary and the inconsistent case. -/
 theorem Snapshot.Sound.interp {Γ : Context World} {K : Snapshot Γ Root} (sound : K.Sound) :
-    Entails Γ K.interp :=
-  fun world compatible =>
-    ⟨fun fact mem => sound.1 fact mem world compatible,
-      fun group mem => (sound.2 group mem).shared world compatible⟩
+    Entails Γ K.interp := by
+  intro world compatible
+  unfold Snapshot.interp
+  split
+  next inconsistent => exact sound.2.2 inconsistent world compatible
+  next =>
+    exact ⟨fun fact mem => sound.1 fact mem world compatible,
+      fun group mem => (sound.2.1 group mem).shared world compatible⟩
 
 /-- A sound snapshot forgets to sound knowledge in the earlier API. -/
 theorem Snapshot.Sound.toKnowledge {Γ : Context World} {K : Snapshot Γ Root} (sound : K.Sound) :
@@ -746,16 +756,17 @@ Runtime: `Afaik.project`, of which relevance projection to the root's connected 
 
 theorem Snapshot.Sound.empty {Γ : Context World} (root : World → Root) :
     (Snapshot.empty Γ root).Sound :=
-  ⟨fun _ mem => (nomatch mem), fun _ mem => nomatch mem⟩
+  ⟨fun _ mem => (nomatch mem), fun _ mem => (nomatch mem), fun eq => nomatch eq⟩
 
-theorem Snapshot.Sound.inconsistent {Γ : Context World} (root : World → Root) :
-    (Snapshot.inconsistent Γ root).Sound :=
-  ⟨fun _ mem => (nomatch mem), fun _ mem => nomatch mem⟩
+/-- The inconsistent snapshot is sound exactly when the contradiction is certified. -/
+theorem Snapshot.Sound.inconsistent {Γ : Context World} (root : World → Root)
+    (certificate : Inconsistent Γ) : (Snapshot.inconsistent Γ root).Sound :=
+  ⟨fun _ mem => (nomatch mem), fun _ mem => (nomatch mem), fun _ => certificate⟩
 
 /-- Adding a certified fact preserves soundness. -/
 theorem Snapshot.Sound.add {Γ : Context World} {K : Snapshot Γ Root} (sound : K.Sound)
     {fact : Fact World} (proof : Entails Γ fact) : (K.add fact).Sound := by
-  refine ⟨fun fact' mem => ?_, sound.2⟩
+  refine ⟨fun fact' mem => ?_, sound.2.1, sound.2.2⟩
   rcases List.mem_cons.mp mem with rfl | mem
   · exact proof
   · exact sound.1 _ mem
@@ -763,32 +774,28 @@ theorem Snapshot.Sound.add {Γ : Context World} {K : Snapshot Γ Root} (sound : 
 /-- Opening a sound group preserves soundness. -/
 theorem Snapshot.Sound.openExists {Γ : Context World} {K : Snapshot Γ Root} (sound : K.Sound)
     {group : WitnessGroup Γ} (groupSound : group.Sound) : (K.openExists group).Sound := by
-  constructor
-  · intro fact mem
-    rcases List.mem_append.mp mem with mem | mem
+  refine ⟨fun fact mem => ?_, fun group' mem => ?_, sound.2.2⟩
+  · rcases List.mem_append.mp mem with mem | mem
     · obtain ⟨predicate, memPredicate, rfl⟩ := List.mem_map.mp mem
       exact groupSound.entails_fact memPredicate
     · exact sound.1 _ mem
-  · intro group' mem
-    rcases List.mem_cons.mp mem with rfl | mem
+  · rcases List.mem_cons.mp mem with rfl | mem
     · exact groupSound
-    · exact sound.2 _ mem
+    · exact sound.2.1 _ mem
 
 /-- Relevance projection preserves soundness. -/
 theorem Snapshot.Sound.project {Γ : Context World} {K : Snapshot Γ Root} (sound : K.Sound)
     (keepFact : Fact World → Bool) (keepGroup : WitnessGroup Γ → Bool) :
     (K.project keepFact keepGroup).Sound := by
-  constructor
-  · intro fact mem
-    exact sound.1 _ (List.mem_filter.mp mem).1
-  · intro group mem
-    obtain ⟨group', mem', rfl⟩ := List.mem_map.mp mem
-    exact (sound.2 _ (List.mem_filter.mp mem').1).restrict keepFact
+  refine ⟨fun fact mem => ?_, fun group mem => ?_, sound.2.2⟩
+  · exact sound.1 _ (List.mem_filter.mp mem).1
+  · obtain ⟨group', mem', rfl⟩ := List.mem_map.mp mem
+    exact (sound.2.1 _ (List.mem_filter.mp mem').1).restrict keepFact
 
 /-- Truncation preserves soundness: the status changes no semantic content. -/
 theorem Snapshot.Sound.withTruncated {Γ : Context World} {K : Snapshot Γ Root} (sound : K.Sound)
     (truncated : Bool) : (K.withTruncated truncated).Sound :=
-  sound
+  ⟨sound.1, sound.2.1, fun eq => by cases truncated <;> exact nomatch eq⟩
 
 theorem Snapshot.Coherent.empty {Γ : Context World} (root : World → Root) :
     (Snapshot.empty Γ root).Coherent :=
@@ -824,147 +831,147 @@ theorem Snapshot.Coherent.withTruncated {Γ : Context World} {K : Snapshot Γ Ro
   coherent
 
 /-!
-### The judgment `Γ ; root ⊢extract[policy] K`
+### The validity judgment
 -/
 
 /--
-`Extracts Γ root policy K` says that `K` is a snapshot one finite extraction about `root` under
-`policy` may return in context `Γ`. Each rule is one runtime smart constructor. Facts enter through
+`ValidSnapshot Γ root maxFacts K` says that `K` is an acceptable snapshot about `root` in context
+`Γ` with at most `maxFacts` facts. Each rule is one runtime smart constructor. Facts enter through
 three doors only: a derivation in the calculus (`derive`), an externally certified fact whose
 runtime counterpart is a kernel-checked proof term (`certify`), and existential opening with one
 shared witness (`openExists`). There is no rule that admits an uncertified fact and no rule that
 chooses a disjunctive branch.
+
+This is a validity judgment, not an extraction semantics. It is satisfied by every snapshot a
+correct run may return, but also by snapshots no run returns: `certify` accepts any entailed fact
+and `withTruncated` either status. The fact bound is the only piece of `Config` it constrains.
 -/
-inductive Extracts {World : Type u} {Root : Type v} (Γ : Context World) (root : World → Root)
-    (policy : Policy) : Snapshot Γ Root → Prop where
+inductive ValidSnapshot {World : Type u} {Root : Type v} (Γ : Context World) (root : World → Root)
+    (maxFacts : Nat) : Snapshot Γ Root → Prop where
   /-- Extraction starts from empty knowledge about the root. -/
-  | empty : Extracts Γ root policy (Snapshot.empty Γ root)
+  | empty : ValidSnapshot Γ root maxFacts (Snapshot.empty Γ root)
   /-- A fact derived in the calculus from hypotheses the context entails. -/
-  | derive {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K)
+  | derive {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K)
       {hyps : List (Fact World)} (hypsHold : ∀ fact ∈ hyps, Entails Γ fact)
       {fact : Fact World} (derivation : Derivation.{u, u + 1} hyps fact)
-      (bound : K.facts.length < policy.maxFacts) :
-      Extracts Γ root policy (K.add fact)
+      (bound : K.facts.length < maxFacts) :
+      ValidSnapshot Γ root maxFacts (K.add fact)
   /-- An externally certified fact; at runtime, a proof term checked by the kernel. -/
-  | certify {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K)
+  | certify {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K)
       {fact : Fact World} (certificate : Entails Γ fact)
-      (bound : K.facts.length < policy.maxFacts) :
-      Extracts Γ root policy (K.add fact)
+      (bound : K.facts.length < maxFacts) :
+      ValidSnapshot Γ root maxFacts (K.add fact)
   /-- An existential opened with one shared witness. -/
-  | openExists {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K)
+  | openExists {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K)
       (group : WitnessGroup Γ) (sound : group.Sound)
-      (bound : K.facts.length + group.predicates.length ≤ policy.maxFacts) :
-      Extracts Γ root policy (K.openExists group)
+      (bound : K.facts.length + group.predicates.length ≤ maxFacts) :
+      ValidSnapshot Γ root maxFacts (K.openExists group)
   /-- Relevance projection: any selection of facts and groups. -/
-  | project {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K)
+  | project {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K)
       (keepFact : Fact World → Bool) (keepGroup : WitnessGroup Γ → Bool) :
-      Extracts Γ root policy (K.project keepFact keepGroup)
+      ValidSnapshot Γ root maxFacts (K.project keepFact keepGroup)
   /-- Bounded search records whether it stopped early. -/
-  | withTruncated {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K)
+  | withTruncated {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K)
       (truncated : Bool) :
-      Extracts Γ root policy (K.withTruncated truncated)
+      ValidSnapshot Γ root maxFacts (K.withTruncated truncated)
   /-- A checked contradiction returns the inconsistent snapshot instead of arbitrary facts. -/
   | inconsistent (certificate : Inconsistent Γ) :
-      Extracts Γ root policy (Snapshot.inconsistent Γ root)
+      ValidSnapshot Γ root maxFacts (Snapshot.inconsistent Γ root)
 
-/-- An extracted snapshot is about the selected root. -/
-theorem Extracts.root_eq {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} : Extracts Γ root policy K → K.root = root
+/-- A valid snapshot is about the selected root. -/
+theorem ValidSnapshot.root_eq {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} : ValidSnapshot Γ root maxFacts K → K.root = root
   | .empty => rfl
-  | .derive extracted .. => extracted.root_eq
-  | .certify extracted .. => extracted.root_eq
-  | .openExists extracted .. => extracted.root_eq
-  | .project extracted .. => extracted.root_eq
-  | .withTruncated extracted _ => extracted.root_eq
+  | .derive valid .. => valid.root_eq
+  | .certify valid .. => valid.root_eq
+  | .openExists valid .. => valid.root_eq
+  | .project valid .. => valid.root_eq
+  | .withTruncated valid _ => valid.root_eq
   | .inconsistent _ => rfl
 
 /--
-Law 1 and law 2 together: every fact of an extracted snapshot follows from the context, and every
-witness group is sound. Each rule must be checked here, so a rule admitting an un-entailed fact or
-an unshared witness would make this theorem unprovable.
+Laws 1, 2, and 4 together: every fact of a valid snapshot follows from the context, every witness
+group is sound, and an inconsistent status is certified. Each rule must be checked here, so a rule
+admitting an un-entailed fact, an unshared witness, or an unproved contradiction would make this
+theorem unprovable.
 -/
-theorem Extracts.sound {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} : Extracts Γ root policy K → K.Sound
+theorem ValidSnapshot.sound {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} : ValidSnapshot Γ root maxFacts K → K.Sound
   | .empty => .empty root
-  | .derive extracted hypsHold derivation _ => extracted.sound.add (derivation.sound_of hypsHold)
-  | .certify extracted certificate _ => extracted.sound.add certificate
-  | .openExists extracted _ groupSound _ => extracted.sound.openExists groupSound
-  | .project extracted keepFact keepGroup => extracted.sound.project keepFact keepGroup
-  | .withTruncated extracted truncated => extracted.sound.withTruncated truncated
-  | .inconsistent _ => .inconsistent root
+  | .derive valid hypsHold derivation _ => valid.sound.add (derivation.sound_of hypsHold)
+  | .certify valid certificate _ => valid.sound.add certificate
+  | .openExists valid _ groupSound _ => valid.sound.openExists groupSound
+  | .project valid keepFact keepGroup => valid.sound.project keepFact keepGroup
+  | .withTruncated valid truncated => valid.sound.withTruncated truncated
+  | .inconsistent certificate => .inconsistent root certificate
 
-/-- Law 1: every fact in an extracted snapshot is entailed by the context. -/
-theorem Extracts.entails {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K) {fact : Fact World}
+/-- Law 1: every fact in a valid snapshot is entailed by the context. -/
+theorem ValidSnapshot.entails {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K) {fact : Fact World}
     (mem : fact ∈ K.facts) : Entails Γ fact :=
-  extracted.sound.1 fact mem
+  valid.sound.1 fact mem
 
-/-- The whole snapshot: the context entails the combined proposition `⟦K⟧ₜ`. -/
-theorem Extracts.interp {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K) : Entails Γ K.interp :=
-  extracted.sound.interp
+/-- The whole snapshot: the context entails the combined proposition `⟦K⟧`. -/
+theorem ValidSnapshot.interp {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K) : Entails Γ K.interp :=
+  valid.sound.interp
 
-/-- Law 2: every witness group of an extracted snapshot is sound. -/
-theorem Extracts.shared {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K) {group : WitnessGroup Γ}
+/-- Law 2: every witness group of a valid snapshot is sound. -/
+theorem ValidSnapshot.shared {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K) {group : WitnessGroup Γ}
     (mem : group ∈ K.witnesses) : group.Sound :=
-  extracted.sound.2 group mem
+  valid.sound.2.1 group mem
 
 /--
 Law 2, consumer form: for each witness group, one value satisfies all of its predicates in every
 compatible world. This is what connects existential decomposition to the witness identities the
 snapshot retains.
 -/
-theorem Extracts.shared_witness {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K) {group : WitnessGroup Γ}
+theorem ValidSnapshot.shared_witness {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K) {group : WitnessGroup Γ}
     (mem : group ∈ K.witnesses) :
     Entails Γ (fun world => ∃ value : group.Value,
       ∀ predicate ∈ group.predicates, predicate world value) :=
-  (extracted.shared mem).shared
+  (valid.shared mem).shared
 
-/-- Witness groups of an extracted snapshot identify facts that are in the snapshot. -/
-theorem Extracts.witness_facts {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} : Extracts Γ root policy K → K.Coherent
+/-- Witness groups of a valid snapshot identify facts that are in the snapshot. -/
+theorem ValidSnapshot.witness_facts {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} : ValidSnapshot Γ root maxFacts K → K.Coherent
   | .empty => .empty root
-  | .derive extracted .. => extracted.witness_facts.add _
-  | .certify extracted .. => extracted.witness_facts.add _
-  | .openExists extracted group .. => extracted.witness_facts.openExists group
-  | .project extracted keepFact keepGroup => extracted.witness_facts.project keepFact keepGroup
-  | .withTruncated extracted truncated => extracted.witness_facts.withTruncated truncated
+  | .derive valid .. => valid.witness_facts.add _
+  | .certify valid .. => valid.witness_facts.add _
+  | .openExists valid group .. => valid.witness_facts.openExists group
+  | .project valid keepFact keepGroup => valid.witness_facts.project keepFact keepGroup
+  | .withTruncated valid truncated => valid.witness_facts.withTruncated truncated
   | .inconsistent _ => .inconsistent root
 
-/-- The snapshot is finite: it respects the policy's fact bound. -/
-theorem Extracts.bounded {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} : Extracts Γ root policy K → K.facts.length ≤ policy.maxFacts
+/-- The snapshot is finite: it respects the fact bound. -/
+theorem ValidSnapshot.bounded {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} : ValidSnapshot Γ root maxFacts K → K.facts.length ≤ maxFacts
   | .empty => Nat.zero_le _
   | .derive _ _ _ bound => bound
   | .certify _ _ bound => bound
   | .openExists (K := K) _ group _ bound => by
-      show (group.facts ++ K.facts).length ≤ policy.maxFacts
+      show (group.facts ++ K.facts).length ≤ maxFacts
       rw [List.length_append, WitnessGroup.facts, List.length_map, Nat.add_comm]
       exact bound
-  | .project extracted _ _ => Nat.le_trans (List.length_filter_le _ _) extracted.bounded
-  | .withTruncated extracted _ => extracted.bounded
+  | .project valid _ _ => Nat.le_trans (List.length_filter_le _ _) valid.bounded
+  | .withTruncated valid _ => valid.bounded
   | .inconsistent _ => Nat.zero_le _
 
 /-- Law 4: an inconsistent status is certified. -/
-theorem Extracts.inconsistent_certified {Γ : Context World} {root : World → Root}
-    {policy : Policy} {K : Snapshot Γ Root} :
-    Extracts Γ root policy K → K.status = .inconsistent → Inconsistent Γ
-  | .empty, eq => nomatch eq
-  | .derive extracted .., eq => extracted.inconsistent_certified eq
-  | .certify extracted .., eq => extracted.inconsistent_certified eq
-  | .openExists extracted .., eq => extracted.inconsistent_certified eq
-  | .project extracted .., eq => extracted.inconsistent_certified eq
-  | .withTruncated _ truncated, eq => by cases truncated <;> exact nomatch eq
-  | .inconsistent certificate, _ => certificate
+theorem ValidSnapshot.inconsistent_certified {Γ : Context World} {root : World → Root}
+    {maxFacts : Nat} {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K)
+    (inconsistent : K.status = .inconsistent) : Inconsistent Γ :=
+  valid.sound.2.2 inconsistent
 
-/-- An extracted snapshot is certified knowledge in the earlier API. -/
-def Extracts.toCertified {Γ : Context World} {root : World → Root} {policy : Policy}
-    {K : Snapshot Γ Root} (extracted : Extracts Γ root policy K) : CertifiedKnowledge Γ root where
+/-- A valid snapshot is certified knowledge in the earlier API. -/
+def ValidSnapshot.toCertified {Γ : Context World} {root : World → Root} {maxFacts : Nat}
+    {K : Snapshot Γ Root} (valid : ValidSnapshot Γ root maxFacts K) :
+    CertifiedKnowledge Γ root where
   value := K.toKnowledge
-  root_eq := extracted.root_eq
-  certificate := extracted.sound.toKnowledge
+  root_eq := valid.root_eq
+  certificate := valid.sound.toKnowledge
 
 /--
 Law 4, the negative half: `saturated` is not completeness. The judgment admits a saturated snapshot
@@ -972,17 +979,17 @@ that omits an entailed fact, so no consumer may read the status as "every entail
 present".
 -/
 theorem saturated_not_complete :
-    ∃ (World : Type) (Γ : Context World) (root : World → Unit) (policy : Policy)
+    ∃ (World : Type) (Γ : Context World) (root : World → Unit) (maxFacts : Nat)
       (K : Snapshot Γ Unit) (fact : Fact World),
-      Extracts Γ root policy K ∧ K.status = .saturated ∧ Entails Γ fact ∧ fact ∉ K.facts :=
-  ⟨Unit, fun _ => True, fun _ => (), ⟨0⟩, Snapshot.empty _ _, fun _ => True,
+      ValidSnapshot Γ root maxFacts K ∧ K.status = .saturated ∧ Entails Γ fact ∧ fact ∉ K.facts :=
+  ⟨Unit, fun _ => True, fun _ => (), 0, Snapshot.empty _ _, fun _ => True,
     .empty, rfl, fun _ _ => trivial, nofun⟩
 
 /-!
 ### Worked instances
 
 The runtime tests in `Iykyk/Examples/Snapshot.lean` have semantic counterparts here: a shared
-existential witness, and a run that stopped at its fact bound.
+existential witness, a run that stopped at its fact bound, and an inconsistent context.
 -/
 
 namespace Instances
@@ -1000,7 +1007,7 @@ noncomputable def middle : WitnessGroup route :=
 noncomputable def routeSnapshot : Snapshot route Nat :=
   (Snapshot.empty route fun _ => 0).openExists middle
 
-theorem route_extracts : Extracts route (fun _ => 0) ⟨2⟩ routeSnapshot :=
+theorem route_valid : ValidSnapshot route (fun _ => 0) 2 routeSnapshot :=
   .openExists .empty middle (WitnessGroup.open_sound _) (Nat.le_refl _)
 
 /-- Both facts are stated about the one witness of the one group. -/
@@ -1014,7 +1021,7 @@ example : routeSnapshot.status = .saturated := rfl
 example : Entails route fun edge => ∃ m, edge 0 m ∧ edge m 1 := by
   intro edge compatible
   obtain ⟨m, holds⟩ :=
-    route_extracts.shared_witness (List.mem_singleton.mpr rfl) edge compatible
+    route_valid.shared_witness (List.mem_singleton.mpr rfl) edge compatible
   exact ⟨m, holds (fun edge m => edge 0 m) (List.mem_cons_self ..),
     holds (fun edge m => edge m 1) (List.mem_cons_of_mem _ (List.mem_cons_self ..))⟩
 
@@ -1048,7 +1055,7 @@ def reachSnapshot : Snapshot reach Nat :=
   (((Snapshot.empty reach fun _ => 0).add seed).add fun world => world (0 + 1)).withTruncated true
 
 /-- Both facts are derived in the calculus; the second is forward application of an instance. -/
-theorem reach_extracts : Extracts reach (fun _ => 0) ⟨2⟩ reachSnapshot :=
+theorem reach_valid : ValidSnapshot reach (fun _ => 0) 2 reachSnapshot :=
   .withTruncated
     (.derive (.derive .empty reach_hyps (.hyp (List.mem_cons_self ..)) (by decide))
       reach_hyps
@@ -1060,10 +1067,11 @@ theorem reach_extracts : Extracts reach (fun _ => 0) ⟨2⟩ reachSnapshot :=
 
 example : reachSnapshot.status = .truncated := rfl
 
-example : reachSnapshot.facts.length ≤ 2 := reach_extracts.bounded
+example : reachSnapshot.facts.length ≤ 2 := reach_valid.bounded
 
 /-- Truncation is honest: `world 2` is entailed but not reported, and the status says so. -/
-example : Entails reach (fun world => world 2) ∧ (fun world : Nat → Prop => world 2) ∉ reachSnapshot.facts := by
+example : Entails reach (fun world => world 2) ∧
+    (fun world : Nat → Prop => world 2) ∉ reachSnapshot.facts := by
   refine ⟨fun world ⟨zero, next⟩ => next 1 (next 0 zero), fun mem => ?_⟩
   simp only [reachSnapshot, Snapshot.withTruncated, Snapshot.add, Snapshot.empty,
     List.mem_cons] at mem
@@ -1073,6 +1081,17 @@ example : Entails reach (fun world => world 2) ∧ (fun world : Nat → Prop => 
   · have := congrFun eq fun n => n = 2
     simp [seed] at this
   · exact nomatch eq
+
+/-- A context that asserts a predicate and its negation is inconsistent. -/
+def clash : Context (Nat → Prop) := fun world => world 0 ∧ ¬ world 0
+
+theorem clash_inconsistent : Inconsistent clash := fun _ ⟨yes, no⟩ => no yes
+
+/-- The inconsistent snapshot expresses `False`, not the empty conjunction. -/
+example : ValidSnapshot clash (fun _ => 0) 0 (Snapshot.inconsistent clash fun _ => 0) :=
+  .inconsistent clash_inconsistent
+
+example : (Snapshot.inconsistent clash fun _ => (0 : Nat)).interp = fun _ => False := rfl
 
 end Instances
 

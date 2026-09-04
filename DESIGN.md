@@ -284,9 +284,10 @@ through checked smart constructors, projected by deletion, and marked truncated 
 its semantic content.
 
 `WdykResult.snapshot` (`Iykyk/Snapshot.lean`) presents either result as one `Snapshot`—root,
-scope, facts, witness groups, status, and certificate—which is the shape of the metatheory's
-consumer contract (§8.2). A witness group pairs one witness with the indices of the facts that
-mention its term.
+scope with its local instances, facts, witness groups, status, and a certificate the snapshot has
+the kernel check in that scope—which is the shape of the metatheory's consumer contract (§8.2). A
+witness group pairs one witness with the indices of the facts that mention its term. Like `Afaik`
+and `Inconsistency`, it has a private constructor and no `Inhabited` instance.
 
 The fields have distinct roles:
 
@@ -451,12 +452,14 @@ and proves five families of results:
    decomposition jointly reconstruct the information they decompose.
 4. **Certified-knowledge closure.** Empty knowledge is sound; adding a certified fact, projecting,
    marking truncation, and strengthening the context preserve soundness.
-5. **Snapshot contract.** The judgment `Γ ; root ⊢extract[policy] K` packages a finished
-   result—root, finite checked facts, witness groups, context, and status—and its laws are
-   theorems: every fact is entailed and so is the combined proposition `⟦K⟧ₜ`; each witness group
-   is satisfied by one value in every compatible world; projection and truncation preserve
-   soundness; an inconsistent status carries a proof; and `saturated` is not a completeness
-   claim, since the judgment admits a saturated snapshot that omits an entailed fact.
+5. **Snapshot contract.** The validity judgment `ValidSnapshot` packages a finished result—root,
+   finite checked facts, witness groups, context, and status—and its laws are theorems: every
+   fact is entailed and so is the combined proposition `⟦K⟧`, which is `False` for an inconsistent
+   snapshot; each witness group is satisfied by one value in every compatible world; projection
+   and truncation preserve soundness; an inconsistent status carries a proof; and `saturated` is
+   not a completeness claim, since the judgment admits a saturated snapshot that omits an entailed
+   fact. It says which snapshots are acceptable, not which one a run computes; an operational
+   judgment would need per-fact trace evidence.
 
 Soundness alone would be satisfied by an extractor that always returned no facts. The losslessness
 theorems rule out that vacuous interpretation for the structural fragment. Concrete

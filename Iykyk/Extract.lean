@@ -335,7 +335,7 @@ def wdyk (root : Expr) (config : Config := {}) : MetaM WdykResult := do
   let (state, truncated) ← saturate config state
   let contradiction ← contradiction? state
   let result ← if let some proof := contradiction then
-    pure (WdykResult.inconsistent (← Inconsistency.ofProof root scope proof))
+    pure (WdykResult.inconsistent (← Inconsistency.ofProof root scope proof localInstances))
   else
     let knowledge := state.knowledge.withTruncated truncated
     let knowledge ← if config.rootOnly && !(← isProp rootType) then
