@@ -92,7 +92,28 @@ configured extraction before its fixpoint; `saturated` does not claim logical co
 
 ## Programmatic API
 
-The meaningful words are shared by people and consumers:
+Downstream inspectors should use the sealed snapshot boundary:
+
+```lean
+open Iykyk Lean Meta
+
+let snapshot ← Iykyk.wdykSnapshot subject {
+  hypotheses := #[step]
+  mechanisms := #[.simp]
+}
+
+-- snapshot.scope and snapshot.localInstances interpret every stored Expr
+-- snapshot.witnesses gives one stable identity and its fact indices per existential witness
+-- snapshot.certificate is kernel-checked even if kernelCheck := false was requested
+```
+
+`Snapshot.status` is exactly one of `saturated`, `truncated`, or `inconsistent`. An inconsistent
+snapshot has no ordinary facts or witness groups and carries a checked proof of `False`; an ordinary
+snapshot carries the existential closure of its facts. `Snapshot` has a private constructor, no
+`Inhabited` instance, and no adapter from caller-built `Afaik` values, so every obtainable snapshot
+passes through this kernel check.
+
+The lower-level operation remains available for tactics and proof queries:
 
 ```lean
 open Iykyk Lean Meta
@@ -109,8 +130,12 @@ match ← Iykyk.wdyk subject {
     pure ()
 ```
 
-`Iykyk.Query` provides consumer-neutral lookup over `Afaik`. Spytial uses this public operation and
-relationalizes the returned `Afaik`; it does not depend on the tactic renderer.
+Unlike `wdykSnapshot`, raw `wdyk` honors `Config.kernelCheck := false`; it should only be used when
+the caller needs the mutable-by-subset `Afaik` query interface or deliberately accepts that weaker
+boundary. `Iykyk.Query` provides consumer-neutral lookup over `Afaik`.
+
+IYKYK stops at `(Γ, e) → K`. Relational schemas, tuple or atom allocation, and textual or diagram
+presentation are downstream concerns.
 
 It also provides bounded, goal-directed proof queries. Exact facts need no mechanism; additional
 proof search is explicitly opt-in:
