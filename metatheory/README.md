@@ -34,6 +34,36 @@ a branch.
 fact requires a certificate, and projection, truncation, and context strengthening preserve
 soundness. Inconsistency remains a separate result because it entails every fact.
 
+**The snapshot contract.** `Snapshot` packages a finished result for consumers: the selected root,
+finite checked facts, witness groups (`WitnessGroup`: one witness and the predicates stated about
+it), and a `Status` of `saturated`, `truncated`, or `inconsistent`; the context in which its terms
+are meaningful is its type index. `ValidSnapshot Γ root maxFacts K` is a validity judgment: it says
+which snapshots are acceptable answers about `root` in `Γ` within the fact bound. Its rules are the
+runtime smart constructors—`empty`, `derive` (a `Derivation` in the calculus), `certify` (an
+external certificate), `openExists` (one existential opened with one shared witness), `project`,
+`withTruncated`, and `inconsistent`—and its laws are theorems about it:
+
+1. every fact is entailed (`ValidSnapshot.sound`, `ValidSnapshot.entails`), and so is the combined
+   proposition `⟦K⟧` (`ValidSnapshot.interp`), which is `False` for an inconsistent snapshot and
+   the conjunction of the facts with each witness bound once otherwise;
+2. for each witness group, one value satisfies all of its predicates in every compatible world
+   (`ValidSnapshot.shared_witness`), and the group's facts are facts of the snapshot
+   (`ValidSnapshot.witness_facts`);
+3. projection and truncation preserve soundness (`Snapshot.Sound.project`,
+   `Snapshot.Sound.withTruncated`); and
+4. the fact bound holds (`ValidSnapshot.bounded`) and an inconsistent status carries a proof
+   (`ValidSnapshot.inconsistent_certified`), while `saturated_not_complete` shows the judgment
+   admits a saturated snapshot that omits an entailed fact, so no status is a completeness claim.
+
+The judgment is not an operational semantics of `wdyk`. `certify` accepts any entailed fact,
+`withTruncated` either status, and the fact bound is the only configuration it constrains, so it
+does not say which facts a run finds or whether saturation really occurred. Instantiating it for
+an actual run would need per-fact trace evidence, which is issue #3. `ValidSnapshot.toCertified`
+connects a snapshot to `CertifiedKnowledge`. `Snapshot` mentions no atom, tuple, or rendering
+concept; a consumer that relationalizes it adds its own. The `Instances` namespace works three
+snapshots through the judgment—a shared existential witness, a truncated run, and an inconsistent
+context—matching the runtime tests in `Iykyk/Examples/Snapshot.lean`.
+
 ## Correspondence with the implementation
 
 | Runtime (`Iykyk/…`) | Metatheory |
@@ -50,6 +80,10 @@ soundness. Inconsistency remains a separate result because it entails every fact
 | `Afaik.withTruncated` | `CertifiedKnowledge.withTruncated` |
 | distinct `Inconsistency` result | `inconsistent_entails`, `CertifiedResult` |
 | disjunctions kept whole | `branch_choice_unsound` |
+| `wdykSnapshot` (`Iykyk/Snapshot.lean`) | `Snapshot`, `ValidSnapshot` |
+| `WitnessGroup.factIndices`: facts mentioning one witness term | `WitnessGroup`, `ValidSnapshot.shared_witness`, `ValidSnapshot.witness_facts` |
+| `SnapshotStatus` | `Status`, `ValidSnapshot.inconsistent_certified`, `saturated_not_complete` |
+| `Snapshot.certificate`, kernel-checked by `wdykSnapshot` | `Snapshot.interp`, `ValidSnapshot.interp` |
 
 The correspondence is structural. `Afaik` and `Inconsistency` have private constructors,
 so the checked smart constructors in `Iykyk/Knowledge.lean` are the only construction path. Every
@@ -64,3 +98,11 @@ Internalizing that step would require formalizing Lean's type theory and adding 
 principle—“kernel-accepted implies true”—strong enough to imply Lean's own consistency. iykyk follows
 the standard proof-producing automation boundary: metaprograms may search however they like, but
 every reported result carries evidence checked by the kernel.
+
+`Iykyk/Snapshot.lean` names this boundary where a consumer meets it. `wdykSnapshot` produces a
+value with the contract's shape, not a proof of the judgment: under the trusted reading, the
+snapshot it returns satisfies `ValidSnapshot`, with the kernel check it performs in its own scope
+as the operational form of fact soundness and one witness term occurring in several facts as the
+operational form of witness sharing. `Afaik`, `Inconsistency`, and `Snapshot` have private
+constructors and no `Inhabited` instance, so a consumer cannot obtain one except through the
+checked path.

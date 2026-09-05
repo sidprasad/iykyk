@@ -310,7 +310,8 @@ The snapshot constructor is private, the type has no `Inhabited` instance, and t
 adapter from arbitrary `Afaik` values. `wdykSnapshot` always runs the kernel check, independently of
 the optional check on raw `wdyk`. These are runtime enforcement choices, not a second semantic
 model. The existing `Knowledge.Sound`, `CertifiedKnowledge`, and shared-existential theorems state
-the corresponding abstract properties.
+the corresponding abstract properties, and the validity judgment `ValidSnapshot` (§8.2) packages
+them for the snapshot as one unit.
 
 The boundary ends at `(Γ, e) → K`: it deliberately contains no relational schema, tuples, atoms,
 or presentation data.
@@ -455,7 +456,7 @@ or crosses the explicitly trusted boundary.
 ### 8.2 What the formal metatheory proves
 
 The separate model in `metatheory/IykykMetatheory.lean` treats contexts as sets of possible worlds
-and proves four families of results:
+and proves five families of results:
 
 1. **Derivation soundness.** Hypothesis lookup, conjunction and equivalence elimination,
    disjunctive syllogism, universal instantiation, and forward application preserve entailment.
@@ -465,6 +466,15 @@ and proves four families of results:
    decomposition jointly reconstruct the information they decompose.
 4. **Certified-knowledge closure.** Empty knowledge is sound; adding a certified fact, projecting,
    marking truncation, and strengthening the context preserve soundness.
+5. **Snapshot contract.** The validity judgment `ValidSnapshot` packages a finished result—root,
+   finite checked facts, witness groups, context, and status—and its laws are theorems: every
+   fact is entailed and so is the combined proposition `⟦K⟧`, which is `False` for an inconsistent
+   snapshot; each witness group is satisfied by one value in every compatible world; projection
+   and truncation preserve soundness; an inconsistent status carries a proof; and `saturated` is
+   not a completeness claim, since the judgment admits a saturated snapshot that omits an entailed
+   fact. It says which snapshots are acceptable, not which one a run computes; an operational
+   judgment would need per-fact trace evidence. `wdykSnapshot` (§5.1) produces a snapshot of that
+   shape and performs the kernel check that is the operational form of its soundness law.
 
 Soundness alone would be satisfied by an extractor that always returned no facts. The losslessness
 theorems rule out that vacuous interpretation for the structural fragment. Concrete

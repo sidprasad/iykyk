@@ -16,6 +16,14 @@ The snapshot constructor is private and the type has no `Inhabited` instance. In
 is no adapter from an arbitrary `Afaik` or `WdykResult`: every public construction path runs `wdyk`
 and then performs the kernel check here, even when `Config.kernelCheck` is false. Relationalization,
 atom allocation, tuple construction, and presentation belong to consumers rather than this layer.
+
+The semantic contract this boundary realizes is `Iykyk.Metatheory.Snapshot` with the validity
+judgment `ValidSnapshot` in `metatheory/IykykMetatheory.lean`: `SnapshotStatus` mirrors its
+`Status`, a `WitnessGroup`'s `factIndices` are the facts a semantic group states about its one
+witness, and `certificate` is the runtime form of `Snapshot.interp`, which is `False` for an
+inconsistent snapshot and the facts with each witness bound once otherwise. What connects the two
+is the trusted reading of a kernel-checked `Expr` as a fact over worlds, named in
+`metatheory/README.md`; the judgment describes acceptable snapshots, and this module produces one.
 -/
 
 namespace Iykyk

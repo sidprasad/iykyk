@@ -172,10 +172,15 @@ proves:
   universal instantiation, and forward application;
 - losslessness of conjunction, equivalence, and shared-witness existential decomposition; and
 - counterexamples showing why existential components cannot receive unrelated witnesses and why
-  a disjunction cannot be replaced by either branch.
+  a disjunction cannot be replaced by either branch; and
+- a validity judgment `ValidSnapshot` over a witness-aware semantic snapshot, whose laws are fact
+  soundness, one shared witness per existential proof, soundness-preserving projection and
+  truncation, and a status that is certified when inconsistent and never a completeness claim. It
+  says which snapshots are acceptable, not which one a run computes; `wdykSnapshot` produces one.
 
-Runtime construction mirrors those proofs. `Afaik` and `Inconsistency` have private constructors;
-facts and witnesses enter only through checked smart constructors. Each finished `Afaik` is reified
+Runtime construction mirrors those proofs. `Afaik`, `Inconsistency`, and `Snapshot` have private
+constructors and no `Inhabited` instance; facts and witnesses enter only through checked smart
+constructors. Each finished `Afaik` is reified
 as one existentially quantified conjunction and checked by the kernel. See
 [`metatheory/README.md`](./metatheory/README.md) and [DESIGN.md](./DESIGN.md) for the full boundary and
 research framing.
@@ -191,7 +196,9 @@ research framing.
 - preservation of disjunctions plus checked disjunctive syllogism;
 - direct inconsistency detection;
 - projection to the connected component containing a value focus;
-- an unforgeable `Afaik` and per-run kernel certification; and
+- an unforgeable `Afaik` and per-run kernel certification;
+- a sealed, kernel-checked `Snapshot` boundary (`wdykSnapshot`) with a semantic contract in the
+  metatheory; and
 - a programmatic `Iykyk.wdyk` API with consumer-neutral lookup and bounded proof queries.
 
 The representation is intentionally small. It stores Lean `Expr`s and proof terms in a captured
@@ -209,6 +216,7 @@ lake env lean Iykyk/Examples/Automation.lean
 lake env lean Iykyk/Examples/Certified.lean
 lake env lean Iykyk/Examples/Exclusion.lean
 lake env lean Iykyk/Examples/Query.lean
+lake env lean Iykyk/Examples/Snapshot.lean
 ```
 
 The project uses Lean 4.33.1.
