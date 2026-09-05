@@ -1,139 +1,110 @@
 module
 
-public import Iykyk.Certify
+public import Iykyk.Extract
 
 public section
 
 /-!
-# The snapshot contract at runtime
+# Witness-aware knowledge snapshots
 
-`metatheory/IykykMetatheory.lean` states the consumer contract over a semantic `Snapshot`: the
-selected root, finite checked facts, witness groups, the context in which its terms are meaningful,
-and the status of the finite run, with the validity judgment `ValidSnapshot` giving its laws. This
-module is the runtime side of that contract. `WdykResult.snapshot` presents a finished extraction
-result in the same shape, so the two can be read field by field:
+`wdykSnapshot` is the checked boundary for downstream consumers of the first inspection stage
+`(Γ, e) → K`. It exposes only finite facts already admitted by `wdyk`, the captured scope and local
+instances needed to interpret them, stable groups for existential witnesses, and one kernel-checked
+certificate for the whole result.
 
-| runtime `Iykyk.Snapshot`               | metatheory `Iykyk.Metatheory.Snapshot`                  |
-| -------------------------------------- | ------------------------------------------------------- |
-| `root : Expr`                          | `root : World → Root`                                   |
-| `scope`, `localInstances`              | the context index `Γ`                                   |
-| `facts : Array KnownFact`              | `facts : List (Fact World)`                             |
-| `witnesses : Array WitnessGroup`       | `witnesses : List (WitnessGroup Γ)`                     |
-| `status : Status`                      | `status : Status`                                       |
-| `certificate : KnownFact`              | `Snapshot.interp`, entailed by `ValidSnapshot.interp`   |
+The snapshot constructor is private and the type has no `Inhabited` instance. In particular, there
+is no adapter from an arbitrary `Afaik` or `WdykResult`: every public construction path runs `wdyk`
+and then performs the kernel check here, even when `Config.kernelCheck` is false. Relationalization,
+atom allocation, tuple construction, and presentation belong to consumers rather than this layer.
 
-The adapter constructs no new proof and forgets nothing checked: every fact still carries the
-proof `Afaik.addFact` checked and every witness group still carries the term `Afaik.addWitness`
-checked. Witness groups are computed by occurrence: a fact belongs to a witness's group when its
-proposition contains that witness's `Classical.choose` term, which is the runtime form of "refers
-to one shared witness".
-
-The certificate is kernel-checked at this boundary, unconditionally. `wdyk` also checks it unless
-`Config.kernelCheck` is off, but a consumer holding a `Snapshot` cannot see that configuration,
-so the snapshot performs its own check rather than inherit a conditional one. For ordinary
-knowledge the certificate is the proposition `Afaik.certificate` builds, the facts conjoined with
-each witness bound once; for an inconsistent result it is `False` with its proof, matching
-`Snapshot.interp`, which is `False` for an inconsistent snapshot.
-
-## The remaining boundary
-
-What relates the two tables is not a theorem but the trusted reading named in
-`metatheory/README.md`: a kernel-checked `Expr` in `scope` is a fact that holds in every world
-compatible with `scope`. Under that reading, the snapshot of a `wdyk` result satisfies
-`ValidSnapshot`, with the calculus rules for hypothesis decomposition and rule application,
-`certify` for facts whose proofs come from `simp`, and `openExists` for each `Classical.choose`
-witness. iykyk does not internalize that reading: it would require a model of Lean's type theory
-and a reflection principle strong enough to imply Lean's own consistency. Nor does the runtime
-produce a trace that would instantiate the judgment rule by rule; that is per-fact provenance,
-issue #3. The kernel check here is the operational form of fact soundness, and one witness term
-occurring in several facts is the operational form of witness sharing.
+The semantic contract this boundary realizes is `Iykyk.Metatheory.Snapshot` with the validity
+judgment `ValidSnapshot` in `metatheory/IykykMetatheory.lean`: `SnapshotStatus` mirrors its
+`Status`, a `WitnessGroup`'s `factIndices` are the facts a semantic group states about its one
+witness, and `certificate` is the runtime form of `Snapshot.interp`, which is `False` for an
+inconsistent snapshot and the facts with each witness bound once otherwise. What connects the two
+is the trusted reading of a kernel-checked `Expr` as a fact over worlds, named in
+`metatheory/README.md`; the judgment describes acceptable snapshots, and this module produces one.
 -/
 
 namespace Iykyk
 
 open Lean Meta
 
-/-- The outcome of one finite extraction. Mirrors `Iykyk.Metatheory.Status`. -/
-inductive Status where
-  /-- The configured finite run reached a fixpoint. This is not logical completeness. -/
+/-- The exhaustive operational outcome of one snapshot extraction. -/
+inductive SnapshotStatus where
   | saturated
-  /-- A configured bound stopped the run before a fixpoint. -/
   | truncated
-  /-- The context was found contradictory, so no ordinary knowledge is reported. -/
   | inconsistent
   deriving Inhabited, BEq, Repr, DecidableEq
 
-/--
-One shared unknown together with the facts that mention it. Mirrors
-`Iykyk.Metatheory.WitnessGroup`, whose predicates correspond to the facts indexed here.
--/
+/-- One existential witness and the indices of all emitted facts in which its term occurs. -/
 structure WitnessGroup where
   witness : Witness
-  /-- Indices into `Snapshot.facts` of the facts whose propositions contain the witness term. -/
-  facts : Array Nat
+  factIndices : Array Nat
   deriving Inhabited
 
 /--
-A finished extraction result in the shape of the semantic contract.
-
-The constructor is private and there is no `Inhabited` instance. A `Snapshot` is obtained only
-through `WdykResult.snapshot`, so holding one is evidence that it was derived from a checked
-`Afaik` or `Inconsistency` and that its certificate was accepted by the kernel in its scope.
+A finite, kernel-checked view of `wdyk` output. The private constructor and absence of `Inhabited`
+make the guarantee a property of every obtainable value, rather than a convention for callers.
 -/
 structure Snapshot where
   private mk ::
   root : Expr
-  /-- The context in which `root`, the facts, the witnesses, and the certificate are meaningful. -/
   scope : LocalContext
-  /-- Typeclass instances registered in `scope`, needed when a consumer re-enters it. -/
   localInstances : LocalInstances
   facts : Array KnownFact
   witnesses : Array WitnessGroup
-  status : Status
-  /--
-  The single proposition the snapshot expresses, with its proof, kernel-checked in `scope`: the
-  facts conjoined and each witness bound once, or `False` for an inconsistent result. Its
-  semantic counterpart is `Iykyk.Metatheory.Snapshot.interp`.
-  -/
+  status : SnapshotStatus
+  /-- `False` for an inconsistent result; otherwise the existential closure of `facts`. -/
   certificate : KnownFact
 
-/-- Whether `proposition` mentions `term`. -/
-private def mentions (proposition term : Expr) : Bool :=
-  proposition == term || (proposition.find? (· == term)).isSome
+private def kernelCheckTerm (scope : LocalContext) (term : Expr) : MetaM Unit := do
+  let term ← instantiateMVars term
+  if term.hasMVar || term.hasLevelMVar then
+    throwError "iykyk: kernel checking requires a metavariable-free snapshot term{indentExpr term}"
+  match Kernel.check (← getEnv) scope term with
+  | .ok _ => return ()
+  | .error exception =>
+      throwError "iykyk: kernel rejected a snapshot term\n\
+        {exception.toMessageData (← getOptions)}"
 
-/-- Group the facts of a knowledge value by the witnesses they mention. -/
-private def witnessGroups (knowledge : Afaik) : Array WitnessGroup :=
-  knowledge.witnesses.map fun witness => {
-    witness
-    facts := Id.run do
-      let mut indices := #[]
-      for h : index in [:knowledge.facts.size] do
-        if mentions knowledge.facts[index].proposition witness.term then
-          indices := indices.push index
-      return indices
+private def mentionsWitness (fact : KnownFact) (witness : Witness) : MetaM Bool := do
+  return (← kabstract fact.proposition witness.term).hasLooseBVars
+
+private def groupWitnesses (knowledge : Afaik) : MetaM (Array WitnessGroup) := do
+  let mut groups := #[]
+  for witness in knowledge.witnesses do
+    let mut factIndices := #[]
+    for index in [:knowledge.facts.size] do
+      if ← mentionsWitness knowledge.facts[index]! witness then
+        factIndices := factIndices.push index
+    -- The certificate uses the same `kabstract` occurrence test and omits unused binders.
+    unless factIndices.isEmpty do
+      groups := groups.push { witness, factIndices }
+  return groups
+
+private def snapshotAfaik (knowledge : Afaik) : MetaM Snapshot :=
+    withLCtx knowledge.scope knowledge.localInstances do
+  kernelCheckTerm knowledge.scope knowledge.root
+  let certificate ← knowledge.kernelCertify
+  let witnesses ← groupWitnesses knowledge
+  for group in witnesses do
+    let witness := group.witness
+    kernelCheckTerm knowledge.scope witness.type
+    kernelCheckTerm knowledge.scope witness.term
+  return {
+    root := knowledge.root
+    scope := knowledge.scope
+    localInstances := knowledge.localInstances
+    facts := knowledge.facts
+    witnesses
+    status := if knowledge.truncated then .truncated else .saturated
+    certificate
   }
 
-/--
-Present ordinary knowledge as a snapshot. Runs in the knowledge's own scope and has the kernel
-check the combined certificate there.
--/
-def Afaik.snapshot (knowledge : Afaik) : MetaM Snapshot :=
-  withLCtx knowledge.scope knowledge.localInstances do
-    return {
-      root := knowledge.root
-      scope := knowledge.scope
-      localInstances := knowledge.localInstances
-      facts := knowledge.facts
-      witnesses := witnessGroups knowledge
-      status := if knowledge.truncated then .truncated else .saturated
-      certificate := ← knowledge.kernelCertify
-    }
-
-/--
-Present a checked contradiction as a snapshot: no facts, no witnesses, and `False` as the
-certificate, checked by the kernel in the contradiction's scope.
--/
-def Inconsistency.snapshot (inconsistency : Inconsistency) : MetaM Snapshot := do
+private def snapshotInconsistency (inconsistency : Inconsistency) : MetaM Snapshot :=
+    withLCtx inconsistency.scope inconsistency.localInstances do
+  kernelCheckTerm inconsistency.scope inconsistency.root
   inconsistency.kernelCertify
   return {
     root := inconsistency.root
@@ -145,9 +116,15 @@ def Inconsistency.snapshot (inconsistency : Inconsistency) : MetaM Snapshot := d
     certificate := { proposition := mkConst ``False, proof := inconsistency.proof }
   }
 
-/-- The adapter from a finished extraction result to the snapshot contract. -/
-def WdykResult.snapshot : WdykResult → MetaM Snapshot
-  | .afaik knowledge => knowledge.snapshot
-  | .inconsistent inconsistency => inconsistency.snapshot
+/--
+Compute a finite witness-aware snapshot and kernel-check its root and combined certificate.
+
+Unlike raw `wdyk`, this boundary always performs kernel certification. Its `kernelCheck`
+configuration field is therefore used only to avoid a redundant earlier check inside `wdyk`.
+-/
+def wdykSnapshot (root : Expr) (config : Config := {}) : MetaM Snapshot := do
+  match ← wdyk root { config with kernelCheck := false } with
+  | .afaik knowledge => snapshotAfaik knowledge
+  | .inconsistent inconsistency => snapshotInconsistency inconsistency
 
 end Iykyk

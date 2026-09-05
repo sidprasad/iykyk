@@ -649,7 +649,8 @@ theorem exists_shared_group_iff {Γ : Context World} {α : Type u}
 /--
 A witness-aware snapshot of finite checked knowledge about a selected root. The context `Γ` in
 which the facts and witnesses are meaningful is the type index. The runtime counterpart is
-`Iykyk.Snapshot`, produced from a finished `WdykResult` by `WdykResult.snapshot`.
+`Iykyk.Snapshot`, produced by `wdykSnapshot`; its `SnapshotStatus` mirrors `Status`, and each of
+its witness groups lists the indices of the facts that mention one witness term.
 -/
 structure Snapshot {World : Type u} (Γ : Context World) (Root : Type v) where
   /-- The selected root. -/
@@ -677,8 +678,8 @@ inconsistent status is backed by a proof that the context entails `False`.
 The single proposition a snapshot expresses, the design document's `⟦K⟧`. An inconsistent
 snapshot expresses `False`, whatever else it carries; any other snapshot expresses that every fact
 holds and each witness group is satisfied by one value. The runtime counterpart is the
-certificate of `Iykyk.Snapshot`: `Afaik.certificate` for ordinary knowledge and the proof of
-`False` for an `Inconsistency`.
+certificate `wdykSnapshot` kernel-checks: `Afaik.certificate` for ordinary knowledge and the proof
+of `False` for an `Inconsistency`.
 -/
 @[expose] def Snapshot.interp {Γ : Context World} (K : Snapshot Γ Root) : Fact World :=
   fun world =>
@@ -741,7 +742,8 @@ Open one existential: its group and the facts it states enter together. Runtime:
 /--
 Keep a selection of facts and groups; a kept group keeps only the predicates whose facts survive.
 Runtime: `Afaik.project`, of which relevance projection to the root's connected component
-(`projectToRoot`) is one instance.
+(`projectToRoot`) is one instance. `wdykSnapshot` additionally drops groups left with no facts,
+which is `keepGroup` rejecting them.
 -/
 @[expose] def Snapshot.project {Γ : Context World} (K : Snapshot Γ Root)
     (keepFact : Fact World → Bool) (keepGroup : WitnessGroup Γ → Bool) : Snapshot Γ Root :=

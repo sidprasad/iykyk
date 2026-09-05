@@ -64,8 +64,7 @@ private meta def assertScopeFactNotUsed (rootStx goalStx : Syntax) : TacticM Uni
     withMainContext do
   let root ← instantiateMVars (← Term.elabTerm rootStx none)
   let goal ← elaboratedGoal goalStx
-  let scope ← instantiateLCtxMVars (← getLCtx)
-  let knowledge := Afaik.empty root scope (← getLocalInstances)
+  let knowledge ← Afaik.empty root
   match ← prove knowledge goal { mechanisms := #[.omega] } with
   | .notProved => return ()
   | .proved _ => throwErrorAt goalStx "query used a scope hypothesis absent from the Afaik"
@@ -121,7 +120,7 @@ example (a b : Nat) (notExtracted : a ≤ b) : True := by
 
 -- Failed definitional matching must not leave a partial assignment behind.
 run_meta do
-  let knowledge := Afaik.empty (mkNatLit 0) (← getLCtx)
+  let knowledge ← Afaik.empty (mkNatLit 0)
   let zeroEqualsZero ← mkEqRefl (mkNatLit 0)
   let proposition ← mkEq (mkNatLit 0) (mkNatLit 0)
   let knowledge ← knowledge.addFact proposition zeroEqualsZero

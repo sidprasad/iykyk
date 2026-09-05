@@ -80,10 +80,10 @@ context—matching the runtime tests in `Iykyk/Examples/Snapshot.lean`.
 | `Afaik.withTruncated` | `CertifiedKnowledge.withTruncated` |
 | distinct `Inconsistency` result | `inconsistent_entails`, `CertifiedResult` |
 | disjunctions kept whole | `branch_choice_unsound` |
-| `WdykResult.snapshot` (`Iykyk/Snapshot.lean`) | `Snapshot`, `ValidSnapshot` |
-| `Snapshot.witnesses`: facts mentioning one witness term | `WitnessGroup`, `ValidSnapshot.shared_witness`, `ValidSnapshot.witness_facts` |
-| `Snapshot.status` | `Status`, `ValidSnapshot.inconsistent_certified`, `saturated_not_complete` |
-| `Snapshot.certificate`, kernel-checked at the boundary | `Snapshot.interp`, `ValidSnapshot.interp` |
+| `wdykSnapshot` (`Iykyk/Snapshot.lean`) | `Snapshot`, `ValidSnapshot` |
+| `WitnessGroup.factIndices`: facts mentioning one witness term | `WitnessGroup`, `ValidSnapshot.shared_witness`, `ValidSnapshot.witness_facts` |
+| `SnapshotStatus` | `Status`, `ValidSnapshot.inconsistent_certified`, `saturated_not_complete` |
+| `Snapshot.certificate`, kernel-checked by `wdykSnapshot` | `Snapshot.interp`, `ValidSnapshot.interp` |
 
 The correspondence is structural. `Afaik` and `Inconsistency` have private constructors,
 so the checked smart constructors in `Iykyk/Knowledge.lean` are the only construction path. Every
@@ -99,10 +99,10 @@ principle—“kernel-accepted implies true”—strong enough to imply Lean's o
 the standard proof-producing automation boundary: metaprograms may search however they like, but
 every reported result carries evidence checked by the kernel.
 
-`Iykyk/Snapshot.lean` names this boundary where a consumer meets it. `WdykResult.snapshot` is a
-view with the contract's shape, not a proof of the judgment: under the trusted reading, the
-snapshot of a `wdyk` result satisfies `ValidSnapshot`, with the kernel check the snapshot performs
-in its own scope as the operational form of fact soundness and one witness term occurring in
-several facts as the operational form of witness sharing. `Afaik`, `Inconsistency`, and `Snapshot`
-have private constructors and no `Inhabited` instance, so a consumer cannot obtain one except
-through the checked path.
+`Iykyk/Snapshot.lean` names this boundary where a consumer meets it. `wdykSnapshot` produces a
+value with the contract's shape, not a proof of the judgment: under the trusted reading, the
+snapshot it returns satisfies `ValidSnapshot`, with the kernel check it performs in its own scope
+as the operational form of fact soundness and one witness term occurring in several facts as the
+operational form of witness sharing. `Afaik`, `Inconsistency`, and `Snapshot` have private
+constructors and no `Inhabited` instance, so a consumer cannot obtain one except through the
+checked path.

@@ -253,14 +253,16 @@ private def applyRulesOnce (config : Config) (state : BuildState) : MetaM (Build
 
 private def saturate (config : Config) (initial : BuildState) : MetaM (BuildState × Bool) := do
   let mut state := initial
-  let mut lastRoundAdded := false
   for _ in [0:config.maxRounds] do
     let (next, added) ← applyRulesOnce config state
     state := next
-    lastRoundAdded := added
     if !added then
       return (state, state.hitFactLimit)
-  return (state, state.hitFactLimit || lastRoundAdded)
+  -- Reaching the round bound is not itself truncation: the last admitted fact may already be a
+  -- fixpoint. Probe once without committing the result so `truncated` means that work actually
+  -- remains. This also makes `maxRounds := 0` honest.
+  let (probe, added) ← applyRulesOnce config state
+  return (state, state.hitFactLimit || probe.hitFactLimit || added)
 
 private def contradiction? (state : BuildState) : MetaM (Option Expr) := do
   let facts := state.knowledge.facts
@@ -318,9 +320,7 @@ def projectToRoot (knowledge : Afaik) : MetaM Afaik := do
 /-- Compute finite, proof-backed knowledge about `root` without mutating the proof goal. -/
 def wdyk (root : Expr) (config : Config := {}) : MetaM WdykResult := do
   let root ← normalize root
-  let scope ← instantiateLCtxMVars (← getLCtx)
-  let localInstances ← getLocalInstances
-  let empty : BuildState := { knowledge := .empty root scope localInstances }
+  let empty : BuildState := { knowledge := ← Afaik.empty root }
   let rootType ← instantiateMVars (← inferType root)
   let initial ← if ← isProp rootType then
     decompose config root rootType empty
@@ -335,7 +335,7 @@ def wdyk (root : Expr) (config : Config := {}) : MetaM WdykResult := do
   let (state, truncated) ← saturate config state
   let contradiction ← contradiction? state
   let result ← if let some proof := contradiction then
-    pure (WdykResult.inconsistent (← Inconsistency.ofProof root scope proof localInstances))
+    pure (WdykResult.inconsistent (← state.knowledge.inconsistent proof))
   else
     let knowledge := state.knowledge.withTruncated truncated
     let knowledge ← if config.rootOnly && !(← isProp rootType) then

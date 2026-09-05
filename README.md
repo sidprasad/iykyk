@@ -92,7 +92,28 @@ configured extraction before its fixpoint; `saturated` does not claim logical co
 
 ## Programmatic API
 
-The meaningful words are shared by people and consumers:
+Downstream inspectors should use the sealed snapshot boundary:
+
+```lean
+open Iykyk Lean Meta
+
+let snapshot ← Iykyk.wdykSnapshot subject {
+  hypotheses := #[step]
+  mechanisms := #[.simp]
+}
+
+-- snapshot.scope and snapshot.localInstances interpret every stored Expr
+-- snapshot.witnesses gives one stable identity and its fact indices per existential witness
+-- snapshot.certificate is kernel-checked even if kernelCheck := false was requested
+```
+
+`Snapshot.status` is exactly one of `saturated`, `truncated`, or `inconsistent`. An inconsistent
+snapshot has no ordinary facts or witness groups and carries a checked proof of `False`; an ordinary
+snapshot carries the existential closure of its facts. `Snapshot` has a private constructor, no
+`Inhabited` instance, and no adapter from caller-built `Afaik` values, so every obtainable snapshot
+passes through this kernel check.
+
+The lower-level operation remains available for tactics and proof queries:
 
 ```lean
 open Iykyk Lean Meta
@@ -109,24 +130,12 @@ match ← Iykyk.wdyk subject {
     pure ()
 ```
 
-`WdykResult.snapshot` presents either result in the shape of the metatheory's consumer contract:
-root, scope and local instances, facts, witness groups (each witness with the indices of the facts
-that mention it), a `Status`, and the combined certificate, which the snapshot has the kernel check
-in its scope whether or not `wdyk` did.
+Unlike `wdykSnapshot`, raw `wdyk` honors `Config.kernelCheck := false`; it should only be used when
+the caller needs the mutable-by-subset `Afaik` query interface or deliberately accepts that weaker
+boundary. `Iykyk.Query` provides consumer-neutral lookup over `Afaik`.
 
-```lean
-let snapshot ← (← Iykyk.wdyk subject).snapshot
-for group in snapshot.witnesses do
-  -- group.facts indexes snapshot.facts: the facts that share group.witness
-  pure ()
-match snapshot.status with
-| .saturated => pure ()    -- the configured finite run reached a fixpoint; not completeness
-| .truncated => pure ()    -- a bound stopped the run early
-| .inconsistent => pure () -- snapshot.certificate proves False; no ordinary facts
-```
-
-`Iykyk.Query` provides consumer-neutral lookup over `Afaik`. Spytial uses this public operation and
-relationalizes the returned `Afaik`; it does not depend on the tactic renderer.
+IYKYK stops at `(Γ, e) → K`. Relational schemas, tuple or atom allocation, and textual or diagram
+presentation are downstream concerns.
 
 It also provides bounded, goal-directed proof queries. Exact facts need no mechanism; additional
 proof search is explicitly opt-in:
@@ -164,10 +173,10 @@ proves:
 - losslessness of conjunction, equivalence, and shared-witness existential decomposition; and
 - counterexamples showing why existential components cannot receive unrelated witnesses and why
   a disjunction cannot be replaced by either branch; and
-- a validity judgment over a witness-aware snapshot, whose laws are fact soundness, one shared
-  witness per existential proof, soundness-preserving projection and truncation, and a status
-  that is certified when inconsistent and never a completeness claim. It says which snapshots are
-  acceptable, not which one a run computes.
+- a validity judgment `ValidSnapshot` over a witness-aware semantic snapshot, whose laws are fact
+  soundness, one shared witness per existential proof, soundness-preserving projection and
+  truncation, and a status that is certified when inconsistent and never a completeness claim. It
+  says which snapshots are acceptable, not which one a run computes; `wdykSnapshot` produces one.
 
 Runtime construction mirrors those proofs. `Afaik`, `Inconsistency`, and `Snapshot` have private
 constructors and no `Inhabited` instance; facts and witnesses enter only through checked smart
@@ -188,8 +197,8 @@ research framing.
 - direct inconsistency detection;
 - projection to the connected component containing a value focus;
 - an unforgeable `Afaik` and per-run kernel certification;
-- a witness-aware `Snapshot` view of any result, in the shape of the metatheory's consumer
-  contract; and
+- a sealed, kernel-checked `Snapshot` boundary (`wdykSnapshot`) with a semantic contract in the
+  metatheory; and
 - a programmatic `Iykyk.wdyk` API with consumer-neutral lookup and bounded proof queries.
 
 The representation is intentionally small. It stores Lean `Expr`s and proof terms in a captured

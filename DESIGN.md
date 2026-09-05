@@ -270,6 +270,7 @@ structure Witness where
 structure Afaik where
   root : Expr
   scope : LocalContext
+  localInstances : LocalInstances
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
@@ -283,12 +284,6 @@ The actual constructors for `Afaik` and `Inconsistency` are private. Knowledge i
 through checked smart constructors, projected by deletion, and marked truncated without changing
 its semantic content.
 
-`WdykResult.snapshot` (`Iykyk/Snapshot.lean`) presents either result as one `Snapshot`—root,
-scope with its local instances, facts, witness groups, status, and a certificate the snapshot has
-the kernel check in that scope—which is the shape of the metatheory's consumer contract (§8.2). A
-witness group pairs one witness with the indices of the facts that mention its term. Like `Afaik`
-and `Inconsistency`, it has a private constructor and no `Inhabited` instance.
-
 The fields have distinct roles:
 
 - `root` identifies the selected term;
@@ -301,6 +296,25 @@ The current representation is an in-process Lean metaprogramming value, not a po
 serialization format. Its `Expr`s remain meaningful in the captured `LocalContext`. A future
 serialization layer would need stable names, explicit binders, and a vocabulary for declarations;
 that concern is intentionally outside the initial object.
+
+### 5.1 The consumer snapshot boundary
+
+`wdykSnapshot` packages the runtime result for downstream inspection. Its sealed `Snapshot` stores
+the root, captured local context and local-instance cache, checked facts, operational status, and
+the combined kernel-checked certificate. Each existential witness is paired with the indices of
+all facts containing the same choice term. The groups are built from exactly the witnesses that
+were abstracted into the certificate, so unused or fact-bounded witnesses cannot appear as empty
+metadata.
+
+The snapshot constructor is private, the type has no `Inhabited` instance, and there is no public
+adapter from arbitrary `Afaik` values. `wdykSnapshot` always runs the kernel check, independently of
+the optional check on raw `wdyk`. These are runtime enforcement choices, not a second semantic
+model. The existing `Knowledge.Sound`, `CertifiedKnowledge`, and shared-existential theorems state
+the corresponding abstract properties, and the validity judgment `ValidSnapshot` (§8.2) packages
+them for the snapshot as one unit.
+
+The boundary ends at `(Γ, e) → K`: it deliberately contains no relational schema, tuples, atoms,
+or presentation data.
 
 ## 6. Extraction algorithm
 
@@ -459,7 +473,8 @@ and proves five families of results:
    and truncation preserve soundness; an inconsistent status carries a proof; and `saturated` is
    not a completeness claim, since the judgment admits a saturated snapshot that omits an entailed
    fact. It says which snapshots are acceptable, not which one a run computes; an operational
-   judgment would need per-fact trace evidence.
+   judgment would need per-fact trace evidence. `wdykSnapshot` (§5.1) produces a snapshot of that
+   shape and performs the kernel check that is the operational form of its soundness law.
 
 Soundness alone would be satisfied by an extractor that always returned no facts. The losslessness
 theorems rule out that vacuous interpretation for the structural fragment. Concrete
