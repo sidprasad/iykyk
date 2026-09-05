@@ -69,7 +69,8 @@ Witness terms themselves are scoped `Classical.choose` applications rather than 
 The constructor is private. An `Afaik` can only be grown from `Afaik.empty` by
 `addFact` (which checks the proof), `addWitness` (which checks the term), `project` (which can only
 delete), and `withTruncated` (which changes no semantic content). Holding a value of this type is
-therefore evidence that every fact in it was checked against its proof.
+therefore evidence that every fact in it was checked against its proof in the stored scope. The type
+has no `Inhabited` instance: `default` would bypass that boundary.
 -/
 structure Afaik where
   private mk ::
@@ -80,37 +81,55 @@ structure Afaik where
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
-  deriving Inhabited
-
-/-- Empty knowledge about `root`, valid in `scope`. Mirrors `CertifiedKnowledge.empty`. -/
-def Afaik.empty (root : Expr) (scope : LocalContext) (localInstances : LocalInstances := #[]) :
-    Afaik where
-  root := root
-  scope := scope
-  localInstances := localInstances
-  witnesses := #[]
-  facts := #[]
-  truncated := false
 
 /--
-Add one fact, checking its proof first. Mirrors `CertifiedKnowledge.add`, whose certificate
-argument corresponds to the check performed here. Callers must be in the knowledge's `scope`.
+Empty knowledge about an in-scope `root`. The scope and its local-instance cache are captured here;
+callers cannot attach the root to an unrelated context. Mirrors `CertifiedKnowledge.empty`.
+-/
+def Afaik.empty (root : Expr) : MetaM Afaik := do
+  let root ← instantiateMVars root
+  if root.hasMVar || root.hasLevelMVar then
+    throwError "iykyk: the inspected root may not contain metavariables{indentExpr root}"
+  discard <| inferType root
+  return {
+    root
+    scope := ← instantiateLCtxMVars (← getLCtx)
+    localInstances := ← getLocalInstances
+    witnesses := #[]
+    facts := #[]
+    truncated := false
+  }
+
+/--
+Add one fact, checking its proof in the knowledge's stored scope. Mirrors
+`CertifiedKnowledge.add`, whose certificate argument corresponds to the check performed here.
 -/
 def Afaik.addFact (knowledge : Afaik) (proposition proof : Expr) : MetaM Afaik := do
-  let proposition ← instantiateMVars proposition
-  let proof ← instantiateMVars proof
-  if proposition.hasMVar || proof.hasMVar then
-    throwError "iykyk internal error: fact may not contain metavariables{indentExpr proposition}"
-  checkEvidence proposition proof
-  return { knowledge with facts := knowledge.facts.push { proposition, proof } }
+  withLCtx knowledge.scope knowledge.localInstances do
+    let proposition ← instantiateMVars proposition
+    let proof ← instantiateMVars proof
+    if proposition.hasMVar || proposition.hasLevelMVar || proof.hasMVar || proof.hasLevelMVar then
+      throwError "iykyk internal error: fact may not contain metavariables{indentExpr proposition}"
+    checkEvidence proposition proof
+    return { knowledge with facts := knowledge.facts.push { proposition, proof } }
 
-/-- Expose one shared unknown, checking that its term has the declared type. -/
+/--
+Expose one shared unknown, checking its term in the knowledge's stored scope. Re-adding the same
+term is a no-op, so one runtime term has one stable witness identity.
+-/
 def Afaik.addWitness (knowledge : Afaik) (type term : Expr) : MetaM Afaik := do
-  let type ← instantiateMVars type
-  let term ← instantiateMVars term
-  checkEvidence type term
-  return { knowledge with
-    witnesses := knowledge.witnesses.push { id := knowledge.witnesses.size, type, term } }
+  withLCtx knowledge.scope knowledge.localInstances do
+    let type ← instantiateMVars type
+    let term ← instantiateMVars term
+    if type.hasMVar || type.hasLevelMVar || term.hasMVar || term.hasLevelMVar then
+      throwError "iykyk internal error: witness may not contain metavariables{indentExpr term}"
+    checkEvidence type term
+    if knowledge.witnesses.any (fun witness => witness.term == term) then
+      return knowledge
+    let nextId := knowledge.witnesses.foldl
+      (fun next witness => max next (witness.id + 1)) 0
+    return { knowledge with
+      witnesses := knowledge.witnesses.push { id := nextId, type, term } }
 
 /--
 Keep only the selected facts and witnesses. Deletion cannot invalidate the remaining checked
@@ -130,29 +149,35 @@ def Afaik.withTruncated (knowledge : Afaik) (truncated : Bool) : Afaik :=
 /--
 A proved contradiction in `scope`. Kept distinct from ordinary knowledge because an inconsistent
 context entails every proposition, so displaying arbitrary facts would be technically sound and
-practically useless. The constructor is private; `Inconsistency.ofProof` checks the proof.
+practically useless. The constructor is private, has no `Inhabited` instance, and can only be
+created by checking a proof in the captured scope.
 -/
 structure Inconsistency where
   private mk ::
   root : Expr
   scope : LocalContext
+  /-- Typeclass instances registered in `scope`, needed when a consumer re-enters it. -/
+  localInstances : LocalInstances
   proof : Expr
-  deriving Inhabited
 
-/-- Package a checked proof of `False`. -/
-def Inconsistency.ofProof (root : Expr) (scope : LocalContext) (proof : Expr) :
-    MetaM Inconsistency := do
-  let proof ← instantiateMVars proof
-  if proof.hasMVar then
-    throwError "iykyk internal error: contradiction proof may not contain metavariables"
-  checkEvidence (mkConst ``False) proof
-  return { root, scope, proof }
+/-- Turn knowledge into an inconsistency result after checking `proof` in the same stored scope. -/
+def Afaik.inconsistent (knowledge : Afaik) (proof : Expr) : MetaM Inconsistency := do
+  withLCtx knowledge.scope knowledge.localInstances do
+    let proof ← instantiateMVars proof
+    if proof.hasMVar || proof.hasLevelMVar then
+      throwError "iykyk internal error: contradiction proof may not contain metavariables"
+    checkEvidence (mkConst ``False) proof
+    return {
+      root := knowledge.root
+      scope := knowledge.scope
+      localInstances := knowledge.localInstances
+      proof
+    }
 
 /-- Inconsistency is kept distinct from ordinary knowledge to avoid displaying arbitrary facts. -/
 inductive WdykResult where
   | afaik (value : Afaik)
   | inconsistent (value : Inconsistency)
-  deriving Inhabited
 
 /-- Bounds and relevance policy for extraction. -/
 structure Config where

@@ -270,6 +270,7 @@ structure Witness where
 structure Afaik where
   root : Expr
   scope : LocalContext
+  localInstances : LocalInstances
   witnesses : Array Witness
   facts : Array KnownFact
   truncated : Bool
@@ -295,6 +296,24 @@ The current representation is an in-process Lean metaprogramming value, not a po
 serialization format. Its `Expr`s remain meaningful in the captured `LocalContext`. A future
 serialization layer would need stable names, explicit binders, and a vocabulary for declarations;
 that concern is intentionally outside the initial object.
+
+### 5.1 The consumer snapshot boundary
+
+`wdykSnapshot` packages the runtime result for downstream inspection. Its sealed `Snapshot` stores
+the root, captured local context and local-instance cache, checked facts, operational status, and
+the combined kernel-checked certificate. Each existential witness is paired with the indices of
+all facts containing the same choice term. The groups are built from exactly the witnesses that
+were abstracted into the certificate, so unused or fact-bounded witnesses cannot appear as empty
+metadata.
+
+The snapshot constructor is private, the type has no `Inhabited` instance, and there is no public
+adapter from arbitrary `Afaik` values. `wdykSnapshot` always runs the kernel check, independently of
+the optional check on raw `wdyk`. These are runtime enforcement choices, not a second semantic
+model. The existing `Knowledge.Sound`, `CertifiedKnowledge`, and shared-existential theorems state
+the corresponding abstract properties.
+
+The boundary ends at `(Γ, e) → K`: it deliberately contains no relational schema, tuples, atoms,
+or presentation data.
 
 ## 6. Extraction algorithm
 

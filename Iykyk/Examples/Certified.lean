@@ -80,7 +80,7 @@ open Lean Meta
 -- `Afaik` is unforgeable: its constructor is private, and the only way to insert a
 -- fact checks the proof. A proof of `True` must not certify `False`.
 run_meta do
-  let knowledge := Afaik.empty (mkConst ``Bool.true) (← getLCtx)
+  let knowledge ← Afaik.empty (mkConst ``Bool.true)
   let rejected ← try
       discard <| knowledge.addFact (mkConst ``False) (mkConst ``True.intro)
       pure false
@@ -90,7 +90,7 @@ run_meta do
 
 -- The same boundary rejects a witness term whose type does not match its declaration.
 run_meta do
-  let knowledge := Afaik.empty (mkConst ``Bool.true) (← getLCtx)
+  let knowledge ← Afaik.empty (mkConst ``Bool.true)
   let rejected ← try
       discard <| knowledge.addWitness (mkConst ``Nat) (mkConst ``Bool.true)
       pure false

@@ -7,3 +7,4 @@ public import Iykyk.Examples.Certified
 public import Iykyk.Examples.Exclusion
 public import Iykyk.Examples.Logic
 public import Iykyk.Examples.Query
+public import Iykyk.Examples.Snapshot
