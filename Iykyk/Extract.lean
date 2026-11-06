@@ -72,9 +72,9 @@ private partial def structurallyKnown (facts : Array KnownFact) (proposition : E
   else
     matchesKnownFact facts proposition
 
-/-- Whether an in-scope term already witnesses an existential's structurally decomposed body. -/
-private def existentialAlreadyKnown (config : Config) (type predicate : Expr)
-    (facts : Array KnownFact) : MetaM Bool := do
+/-- Find an in-scope term that already witnesses the decomposed body. -/
+private def existingWitness? (config : Config) (type predicate : Expr)
+    (facts : Array KnownFact) : MetaM (Option Expr) := do
   for localDecl in ← getLCtx do
     unless localDecl.isImplementationDetail
         || config.excludedHypotheses.contains localDecl.fvarId do
@@ -83,8 +83,25 @@ private def existentialAlreadyKnown (config : Config) (type predicate : Expr)
       let hasType ← try isDefEq (← inferType candidate) type catch _ => pure false
       saved.restore
       if hasType && (← structurallyKnown facts (mkApp predicate candidate)) then
-        return true
-  return false
+        return some candidate
+  return none
+
+/-- A vacuous existential still establishes that its domain is inhabited. Preserve this
+    information when the emitted facts no longer mention the witness. -/
+private def preserveInhabitation (config : Config) (witness : Expr) (state : BuildState) :
+    MetaM BuildState := do
+  let knowledge := state.knowledge
+  let mentions := fun e => containsExpr e witness
+  -- An occurrence inside another choice term disappears when that choice is rebound.
+  -- In nested cases inspect the actual closure with just this witness left free.
+  let nested := knowledge.witnesses.any fun w =>
+    w.term != witness && (mentions w.term || mentions w.type)
+  if !nested && knowledge.facts.any (fun f => mentions f.proposition) then return state
+  let rest := knowledge.project (fun _ => true) (fun w => w.term != witness)
+  if nested && (← kabstract (← rest.certificate).proposition witness).hasLooseBVars then
+    return state
+  let evidence ← mkAppM ``Nonempty.intro #[witness]
+  pushFact { state with knowledge := rest } config (← inferType evidence) evidence
 
 private partial def decompose (config : Config) (proof proposition : Expr)
     (state : BuildState) : MetaM BuildState := do
@@ -105,12 +122,13 @@ private partial def decompose (config : Config) (proof proposition : Expr)
     decompose config backward (← inferType backward) state
   else if proposition.isAppOfArity ``Exists 2 then
     let args := proposition.getAppArgs
-    if ← existentialAlreadyKnown config args[0]! args[1]! state.knowledge.facts then
-      return state
+    if let some witness ← existingWitness? config args[0]! args[1]! state.knowledge.facts then
+      return ← preserveInhabitation config witness state
     let witnessTerm ← mkAppM ``Classical.choose #[proof]
     let state := { state with knowledge := ← state.knowledge.addWitness args[0]! witnessTerm }
     let specProof ← mkAppM ``Classical.choose_spec #[proof]
-    decompose config specProof (← inferType specProof) state
+    let state ← decompose config specProof (← inferType specProof) state
+    preserveInhabitation config witnessTerm state
   else
     pushFact state config proposition proof
 

@@ -124,6 +124,36 @@ elab_rules : tactic
 
 variable {Vertex : Type} (edge : Vertex → Vertex → Prop)
 
+-- Check the exported claim itself, including the effect of deleting a path edge.
+elab "exact_snapshot_certificate " root:term " with_limit " limit:num : tactic =>
+  withMainContext do
+    let snapshot ← snapshotFor root { rootOnly := false, maxFacts := limit.getNat }
+    unless ← isDefEq snapshot.certificate.proposition (← getMainTarget) do
+      throwError "unexpected certificate: {snapshot.certificate.proposition}"
+    closeMainGoal `exact_snapshot_certificate snapshot.certificate.proof
+
+example (s t : Vertex) (h : ∃ m, edge s m ∧ edge m t) : ∃ m, edge s m ∧ edge m t := by
+  exact_snapshot_certificate h with_limit 2
+
+example (s t : Vertex) (h : ∃ m, edge s m ∧ edge m t) : ∃ m, edge s m := by
+  exact_snapshot_certificate h with_limit 1
+
+example (α : Type) (P : Prop) (h : ∃ _ : α, P) : P ∧ Nonempty α := by
+  exact_snapshot_certificate h with_limit 2
+
+-- Reusing a local witness also has to preserve its domain when the known body ignores it.
+example (α : Type) (_a : α) (s : Vertex) (P : Vertex → Prop) (_p : P s) (_h : ∃ _ : α, P s) :
+    P s ∧ Nonempty α := by
+  exact_snapshot_certificate s with_limit 2
+
+-- Normalization can erase the outer witness from an atom while leaving it inside
+-- the inner Classical.choose term. Closing that inner binder removes the occurrence.
+private def ignoresFirst {α β : Type} (P : β → Prop) (_ : α) (b : β) := P b
+
+example (α β : Type) (P : β → Prop) (h : ∃ a : α, ∃ b : β, ignoresFirst P a b) :
+    ∃ b : β, P b ∧ Nonempty α := by
+  exact_snapshot_certificate h with_limit 2
+
 example (source target : Vertex)
     (route : ∃ middle, edge source middle ∧ edge middle target) : True := by
   guard_snapshot_shared source

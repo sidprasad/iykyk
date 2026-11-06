@@ -20,12 +20,15 @@ would make this theorem unprovable.
 
 **Sound and lossless decomposition.** `entails_and_iff`, `entails_equivalence_iff`, and
 `exists_shared_witness_iff` cover one conjunction, equivalence, or existential. `Formula.decompose`
-is the pure recursive algorithm for arbitrarily nested atoms, conjunctions, and world-extending
-existentials. `Formula.decompose_sound` proves every reported fact follows from the context, while
-`Formula.decompose_lossless` proves those facts jointly reconstruct the input formula. Existential
-descendants all use one chosen witness.
+flattens nested atoms, conjunctions, and existentials into typed witness slots and a list of
+atomic observations. It takes the formula alone. `FlatFacts.readBack` binds a single assignment
+for all slots and conjoins the emitted facts. `Formula.decompose_lossless` proves this readback
+equivalent to the input at every world, independently of any proof of the input.
+`Formula.decompose_sound` specializes the result to worlds satisfying a given context.
 
-**Counterexamples for rejected designs.** `unshared_witnesses_lossy` exhibits separately witnessed
+**Counterexamples for rejected designs.** `dropping_one_fact_loses_information` shows that deleting
+an emitted conjunct can make readback true in a world where the input is false.
+`unshared_witnesses_lossy` exhibits separately witnessed
 components whose shared existential is false. `branch_choice_unsound` exhibits a consistent context
 entailing a disjunction but neither disjunct. These results force witness sharing and forbid choosing
 a branch.
@@ -56,6 +59,14 @@ so the checked smart constructors in `Iykyk/Knowledge.lean` are the only constru
 finished result is then reified into one proposition: its facts are conjoined and each shared witness
 becomes one existential binder. `Iykyk/Certify.lean` checks the combined proof with
 `Lean.Kernel.check` in the captured local context.
+
+The modeled equivalence covers full structural decomposition before projection and truncation.
+Runtime extraction uses Lean terms for witnesses. If the body ignores a witness after
+decomposition, extraction records `Nonempty α` for its type. This preserves the existence claim
+when the certificate omits the unused binder, subject to the fact budget and projection.
+`Iykyk/Examples/Snapshot.lean` checks the actual claims for a two-edge path, its one-edge
+truncation, and unused witnesses. The equivalence theorem applies to the model. The runtime
+kernel check certifies the forward direction for each returned snapshot.
 
 ## The trusted boundary
 

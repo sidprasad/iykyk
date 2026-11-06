@@ -222,16 +222,10 @@ theorem exists_shared_witness_iff {Γ : Context World} {left right : World → �
 /-!
 ## The verified decomposition core
 
-The two iff-lemmas above cover one conjunction or one existential. `Formula` covers the whole
-structural fragment the engine decomposes: atoms, conjunction, and existentials in any nesting.
-An existential does not bind a variable; it extends the world, so `Formula` needs no variables,
-substitution, or environments. `Formula.decompose` is the decomposition algorithm itself, written
-as a pure function: conjunctions split, and an existential contributes one chosen witness shared
-by every fact beneath it, exactly as the runtime engine uses one `Classical.choose` term.
-
-`decompose_sound` says every reported fact is entailed. `decompose_lossless` says the reported
-facts jointly reconstruct the hypothesis at any world whatsoever, which is only possible because
-the witness is shared; `unshared_witnesses_lossy` below shows it fails otherwise.
+Flattening takes only the input formula. Each existential allocates one typed slot in a
+witness assignment. All facts in its body read the same slot. Conjunction uses independent
+slots for the witnesses introduced in its two branches. Reading back the output binds one
+assignment around the conjunction of all emitted facts.
 -/
 
 /-- The structural fragment: atoms, conjunction, and world-extending existentials. -/
@@ -246,78 +240,81 @@ def Formula.interp : {World : Type u} → Formula World → Fact World
   | _, .conj left right => fun world => left.interp world ∧ right.interp world
   | _, .ex body => fun world => ∃ value, body.interp (value, world)
 
-/--
-Decomposition: split conjunctions, and open each existential with one chosen witness that all
-facts beneath it share. Beneath an existential the context is extended with the witness component.
--/
-noncomputable def Formula.decompose : {World : Type u} → (Γ : Context World) →
-    (f : Formula World) → Entails Γ f.interp → List (Fact World)
-  | _, _, .atom fact, _ => [fact]
-  | _, Γ, .conj left right, h =>
-      decompose Γ left (fun world hw => (h world hw).1) ++
-        decompose Γ right (fun world hw => (h world hw).2)
-  | _, Γ, .ex body, h =>
-      let witness := fun world hw => Classical.choose (h world hw)
-      (decompose (fun p => Γ p.2 ∧ body.interp p) body (fun _ hp => hp.2)).map
-        fun fact world => ∃ hw : Γ world, fact (witness world hw, world)
+/-- The slots in `Witnesses` name the bound variables shared by the emitted atomic predicates. -/
+structure FlatFacts (World : Type u) where
+  Witnesses : Type u
+  facts : List (Witnesses → World → Prop)
 
-/-- Every fact reported by decomposition is entailed by the context. -/
-theorem Formula.decompose_sound : {World : Type u} → {Γ : Context World} →
-    (f : Formula World) → (h : Entails Γ f.interp) →
-    ∀ fact ∈ f.decompose Γ h, Entails Γ fact
-  | _, _, .atom _, h, _, mem => by
-      simp only [decompose, List.mem_singleton] at mem
-      exact mem ▸ h
-  | _, _, .conj left right, h, _, mem => by
-      rcases List.mem_append.mp mem with mem | mem
-      · exact left.decompose_sound _ _ mem
-      · exact right.decompose_sound _ _ mem
-  | _, _, .ex body, h, _, mem => by
-      simp only [decompose, List.mem_map] at mem
-      obtain ⟨fact, memFact, rfl⟩ := mem
-      intro world hw
-      exact ⟨hw, body.decompose_sound _ fact memFact
-        (Classical.choose (h world hw), world) ⟨hw, Classical.choose_spec (h world hw)⟩⟩
+/-- One assignment must satisfy every fact, including when a witness type might be empty. -/
+def FlatFacts.readBack {World : Type u} (flat : FlatFacts World) : Fact World :=
+  fun world => ∃ assignment : flat.Witnesses, ∀ fact ∈ flat.facts, fact assignment world
 
-/-- Decomposition is nonempty: every formula contributes at least one fact. -/
-theorem Formula.decompose_ne_nil : {World : Type u} → {Γ : Context World} →
-    (f : Formula World) → (h : Entails Γ f.interp) → f.decompose Γ h ≠ []
-  | _, _, .atom _, _ => by simp [decompose]
-  | _, _, .conj left right, h => by
-      intro empty
-      simp only [decompose] at empty
-      exact left.decompose_ne_nil _ (List.append_eq_nil_iff.mp empty).1
-  | _, _, .ex body, h => by
-      intro empty
-      simp only [decompose, List.map_eq_nil_iff] at empty
-      exact body.decompose_ne_nil _ empty
+/-- Combine two lists of facts and keep their independently introduced witness slots separate. -/
+def FlatFacts.combine {World : Type u} (left right : FlatFacts World) : FlatFacts World where
+  Witnesses := left.Witnesses × right.Witnesses
+  facts := (left.facts.map fun p ws w => p ws.1 w) ++ (right.facts.map fun p ws w => p ws.2 w)
 
-/--
-The reported facts jointly reconstruct the decomposed hypothesis at any world, with no reference
-to the context. Sharing is what makes this provable: each existential is re-witnessed by the one
-value all of its facts constrain.
--/
-theorem Formula.decompose_lossless : {World : Type u} → {Γ : Context World} →
-    (f : Formula World) → (h : Entails Γ f.interp) → ∀ world,
-    (∀ fact ∈ f.decompose Γ h, fact world) → f.interp world
-  | _, _, .atom fact, _, world, holds => holds fact (by simp [decompose])
-  | _, _, .conj left right, h, world, holds =>
-      ⟨left.decompose_lossless _ world fun fact mem =>
-          holds fact (List.mem_append.mpr (.inl mem)),
-        right.decompose_lossless _ world fun fact mem =>
-          holds fact (List.mem_append.mpr (.inr mem))⟩
-  | _, Γ, .ex body, h, world, holds => by
-      simp only [decompose, List.mem_map] at holds
-      have entails : Entails (fun p => Γ p.2 ∧ body.interp p) body.interp := fun _ hp => hp.2
-      obtain ⟨first, memFirst⟩ :=
-        List.exists_mem_of_ne_nil _ (body.decompose_ne_nil entails)
-      obtain ⟨hw, -⟩ := holds _ ⟨first, memFirst, rfl⟩
-      show ∃ value, body.interp (value, world)
-      refine ⟨Classical.choose (h world hw),
-        body.decompose_lossless entails (Classical.choose (h world hw), world)
-          fun fact mem => ?_⟩
-      obtain ⟨hw', factHolds⟩ := holds _ ⟨fact, mem, rfl⟩
-      exact factHolds
+/-- Move the existential variable from the extended world into one shared witness slot. -/
+def FlatFacts.bindWitness {α World : Type u} (body : FlatFacts (α × World)) : FlatFacts World where
+  Witnesses := α × body.Witnesses
+  facts := body.facts.map fun p ws w => p ws.2 (ws.1, w)
+
+theorem FlatFacts.readBack_combine {World : Type u} (left right : FlatFacts World) (w : World) :
+    (left.combine right).readBack w ↔ left.readBack w ∧ right.readBack w := by
+  constructor
+  · rintro ⟨⟨wl, wr⟩, holds⟩
+    constructor
+    · exact ⟨wl, fun p hp => holds _ (List.mem_append_left _ (List.mem_map.mpr ⟨p, hp, rfl⟩))⟩
+    · exact ⟨wr, fun p hp => holds _ (List.mem_append_right _ (List.mem_map.mpr ⟨p, hp, rfl⟩))⟩
+  · rintro ⟨⟨wl, hl⟩, ⟨wr, hr⟩⟩
+    refine ⟨(wl, wr), ?_⟩
+    intro fact mem
+    rcases List.mem_append.mp mem with mem | mem
+    · obtain ⟨p, hp, rfl⟩ := List.mem_map.mp mem
+      exact hl p hp
+    · obtain ⟨p, hp, rfl⟩ := List.mem_map.mp mem
+      exact hr p hp
+
+theorem FlatFacts.readBack_bindWitness {α World : Type u} (body : FlatFacts (α × World)) (w : World) :
+    body.bindWitness.readBack w ↔ ∃ value, body.readBack (value, w) := by
+  constructor
+  · rintro ⟨⟨value, ws⟩, holds⟩
+    exact ⟨value, ws, fun p hp => holds _ (List.mem_map.mpr ⟨p, hp, rfl⟩)⟩
+  · rintro ⟨value, ws, holds⟩
+    refine ⟨(value, ws), ?_⟩
+    intro fact mem
+    obtain ⟨p, hp, rfl⟩ := List.mem_map.mp mem
+    exact holds p hp
+
+/-- Flatten the structural connectives, leaving one output predicate for each input atom. -/
+def Formula.decompose : {World : Type u} → Formula World → FlatFacts World
+  | _, .atom p => ⟨PUnit, [fun _ w => p w]⟩
+  | _, .conj left right => left.decompose.combine right.decompose
+  | _, .ex body => body.decompose.bindWitness
+
+/-- Closing the emitted facts recovers the formula in every world, without assuming it holds. -/
+theorem Formula.decompose_lossless : {World : Type u} → (f : Formula World) → (w : World) →
+    f.decompose.readBack w ↔ f.interp w
+  | _, .atom p, w => by
+    constructor
+    · rintro ⟨ws, holds⟩
+      exact holds _ (List.Mem.head _)
+    · intro hp
+      refine ⟨PUnit.unit, ?_⟩
+      intro fact mem
+      obtain rfl := List.mem_singleton.mp mem
+      exact hp
+  | _, .conj left right, w =>
+    (FlatFacts.readBack_combine _ _ w).trans
+      (and_congr (left.decompose_lossless w) (right.decompose_lossless w))
+  | _, .ex body, w =>
+    (FlatFacts.readBack_bindWitness _ w).trans
+      (exists_congr fun value => body.decompose_lossless (value, w))
+
+/-- The same witness assignment satisfies all emitted facts in each compatible world. -/
+theorem Formula.decompose_sound {World : Type u} (f : Formula World) {Γ : Context World} (h : Entails Γ f.interp) :
+    Entails Γ f.decompose.readBack :=
+  fun w hw => (f.decompose_lossless w).mpr (h w hw)
 
 /-!
 ## Counterexamples for the rejected designs
@@ -325,6 +322,20 @@ theorem Formula.decompose_lossless : {World : Type u} → {Γ : Context World} �
 Two simpler designs look plausible and are refuted by concrete contexts. These theorems are the
 reason the extractor preserves witness identity and never commits to a disjunctive branch.
 -/
+
+/-- Dropping the second atom can make a false existential read back as true. -/
+theorem dropping_one_fact_loses_information :
+    ∃ f : Formula Unit, ({ f.decompose with facts := f.decompose.facts.take 1 }).readBack () ∧
+      ¬ f.interp () := by
+  let left : Fact (Bool × Unit) := fun p => p.1 = true
+  let right : Fact (Bool × Unit) := fun p => p.1 = false
+  refine ⟨.ex (.conj (.atom left) (.atom right)), ?_, ?_⟩
+  · refine ⟨(true, PUnit.unit, PUnit.unit), ?_⟩
+    intro fact mem
+    obtain rfl := List.mem_singleton.mp mem
+    rfl
+  · rintro ⟨v, hl, hr⟩
+    exact Bool.noConfusion (hl.symm.trans hr : true = false)
 
 /--
 Splitting an existential into facts about two unrelated witnesses loses information: there is a
